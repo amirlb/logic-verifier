@@ -1,0 +1,4 @@
+(executable
+ (public_name logic)
+ (name main)
+ (libraries logic))

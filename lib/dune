@@ -1,0 +1,10 @@
+(library
+ (name logic)
+ (preprocess (pps ppx_deriving.ord ppx_deriving.map)
+))
+
+(menhir
+ (modules parser)
+ (explain true))
+
+(ocamllex lexer)
