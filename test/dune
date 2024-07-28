@@ -1,0 +1,6 @@
+(tests
+ (libraries logic alcotest)
+ (names
+   test_kernel
+))
+

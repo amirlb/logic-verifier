@@ -58,6 +58,7 @@ rule main = parse
 
 | lident as id { Parser.LIDENT id }
 | uident as id  { Parser.UIDENT id }
+| '?' (uident as id)  { Parser.QIDENT id }
 
 | eof { Parser.EOF }
 | _ as c { failwith (Printf.sprintf "unexpected character: %C" c) }
