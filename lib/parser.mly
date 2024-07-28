@@ -103,13 +103,13 @@ Subproof:
 Step:
   | ASSUME;  p = Prop   { [ Kernel.String.assume p ]  }
   | FANTASY; p = Prop; t = Subproof { [ Kernel.String.fantasy p t ] }
-  | JOIN;    l = Subproof; COMMA; r = Subproof { [ Kernel.String.join l r ]}
+  | JOIN;    l = Subproof; r = Subproof { [ Kernel.String.join l r ]}
   | SEPARATE; t = Subproof { let l,r = Kernel.String.separate t in [l; r] }
   | DNEG_ADD; t = Subproof { [ Kernel.String.add_doubleneg t ]}
   | DNEG_REM; t = Subproof { [ Kernel.String.rem_doubleneg t ]}
   | CONTRAPOSITIVE1; t = Subproof { [ Kernel.String.contrapositive1 t ]}
   | CONTRAPOSITIVE2; t = Subproof { [ Kernel.String.contrapositive2 t ]}
-  | DETACHMENT; l = Subproof; COMMA; r = Subproof { [ Kernel.String.detachment l r ]}
+  | DETACHMENT; l = Subproof; r = Subproof { [ Kernel.String.detachment l r ]}
   | SWITCHEROO; t = Subproof { [ Kernel.String.switcheroo t ]}
   | DE_MORGAN; t = Subproof { [ Kernel.String.de_morgan t ]}
 
