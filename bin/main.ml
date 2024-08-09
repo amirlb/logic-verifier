@@ -24,7 +24,7 @@ let proof2 =
   let final = parse_string "PandQ = P & Q
                             assume _
                             dp, dq = separate _
-                            join dq, dp
+                            join dq dp
                             fantasy PandQ _
                             "
   in Kernel.proof final
@@ -32,7 +32,7 @@ let proof2 =
 let proof3 =
   let final = parse_string "p = assume P
                             q = assume Q
-                            join p, q
+                            join p q
                             fantasy Q _
                             fantasy P _
                             "
@@ -49,15 +49,15 @@ let gantos_ax =
 
                             nq = assume ~Q
                             lol = contrapositive1 p_imp_q
-                            j1 = detachment nq, _
+                            j1 = detachment nq _
                             contrapositive1 not_p_imp_q
-                            j2 = detachment nq, _
+                            j2 = detachment nq _
 
-                            join j1, j2
+                            join j1 j2
                             de_morgan _
                             fantasy ~Q _
                             contrapositive2 _
-                            detachment p_or_not_p, _
+                            detachment p_or_not_p _
                             fantasy Axiom _
                             "
   in Kernel.proof final
@@ -70,7 +70,7 @@ let by_contradiction =
                             add_doubleneg dp
                             fantasy NQ _
                             contrapositive2 _
-                            detachment dnp, _
+                            detachment dnp _
                             fantasy PnP _
                             "
   in

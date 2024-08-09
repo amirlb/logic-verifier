@@ -1,5 +1,6 @@
 %token <String.t> LIDENT
 %token <String.t> UIDENT
+%token <String.t> QIDENT
 
 %token EOF
 
@@ -103,13 +104,13 @@ Subproof:
 Step:
   | ASSUME;  p = Prop   { [ Kernel.String.assume p ]  }
   | FANTASY; p = Prop; t = Subproof { [ Kernel.String.fantasy p t ] }
-  | JOIN;    l = Subproof; COMMA; r = Subproof { [ Kernel.String.join l r ]}
+  | JOIN;    l = Subproof; r = Subproof { [ Kernel.String.join l r ]}
   | SEPARATE; t = Subproof { let l,r = Kernel.String.separate t in [l; r] }
   | DNEG_ADD; t = Subproof { [ Kernel.String.add_doubleneg t ]}
   | DNEG_REM; t = Subproof { [ Kernel.String.rem_doubleneg t ]}
   | CONTRAPOSITIVE1; t = Subproof { [ Kernel.String.contrapositive1 t ]}
   | CONTRAPOSITIVE2; t = Subproof { [ Kernel.String.contrapositive2 t ]}
-  | DETACHMENT; l = Subproof; COMMA; r = Subproof { [ Kernel.String.detachment l r ]}
+  | DETACHMENT; l = Subproof; r = Subproof { [ Kernel.String.detachment l r ]}
   | SWITCHEROO; t = Subproof { [ Kernel.String.switcheroo t ]}
   | DE_MORGAN; t = Subproof { [ Kernel.String.de_morgan t ]}
 
@@ -120,11 +121,12 @@ Prop:
   | UNDERSCORE { last props }
   | v = UIDENT
     { match getvar v props with
-      | exception Not_found -> Proposition.Atom v
+      | exception Not_found -> Proposition.mk_fun v []
       | p -> p
     }
   | LPAREN; p = Prop; RPAREN { p }
-  | NOT; p = Prop { Proposition.Not p }
-  | l = Prop; AND; r = Prop { Proposition.And (l, r) }
-  | l = Prop; OR; r = Prop { Proposition.Or (l, r) }
-  | l = Prop; IMPLIES; r = Prop { Proposition.Implies (l, r) }
+  | v = QIDENT { Proposition.mk_meta v }
+  | NOT; p = Prop { Proposition.mk_not p }
+  | l = Prop; AND; r = Prop { Proposition.mk_and l r }
+  | l = Prop; OR; r = Prop { Proposition.mk_or l r }
+  | l = Prop; IMPLIES; r = Prop { Proposition.mk_implies l r }
