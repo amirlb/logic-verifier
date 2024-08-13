@@ -47,6 +47,19 @@ let example_3 =
 
   (claim, proof)
 
+(* TODO: implement second-order logic *)
+(* let example_4 =
+  let axiom = F.(Forall2("P", Forall("x", Forall("y",
+    Op(Implies(Equal("x", "y"), Op(Iff(Apply("P", ["x"]), Apply("P", ["y"]))))))))) in
+  let property a = F.(Forall("x", Member("x", a))) in
+  let claim = F.(Forall("a", Forall("b",
+    Op(Implies(Op(And(axiom, Op(And(property "a", Equal("a", "b"))))),
+               property "b"))))) in
+
+  let proof = () in
+
+  (claim, proof) *)
+
 let validate (claim, proof) =
   assert (V.does_prove proof claim);
   Printf.printf "Verified: %s\n" (V.string_of_formula claim)
