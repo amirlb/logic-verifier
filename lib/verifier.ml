@@ -59,20 +59,36 @@ module Pattern = struct
     | Op expr -> LogicOp.to_string (LogicOp.map to_string expr)
 end
 
+module type ORDER_STRING = sig
+  type t
+  val compare : t -> t -> int
+  val to_string : t -> String.t
+end
+
+module Formula(Var : ORDER_STRING) = struct
+  type t =
+    | Equal of Var.t * Var.t
+    | Member of Var.t * Var.t
+    | Forall of Var.t * t
+    | Exists of Var.t * t
+    | Op of t LogicOp.t
+  [@@deriving ord]
+
+  let rec to_string = function
+    | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (Var.to_string lhs) (Var.to_string rhs)
+    | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (Var.to_string lhs) (Var.to_string rhs)
+    | Forall (var, formula) -> Printf.sprintf "∀%s %s" (Var.to_string var) (to_string formula)
+    | Exists (var, formula) -> Printf.sprintf "∃%s %s" (Var.to_string var) (to_string formula)
+    | Op expr -> LogicOp.to_string (LogicOp.map to_string expr)
+end
+
 module type S = sig
   type var
   type formula
   type judgement    (* an assertion of the form  A1, ... An |- B *)
   type inference    (* a valid propositional calculus logical inference rule *)
 
-  (* constructors for formulas *)
-  val equal : var -> var -> formula
-  val member : var -> var -> formula
-  val forall : var -> formula -> formula
-  val exists : var -> formula -> formula
-  val op : formula LogicOp.t -> formula
-
-  (* predicate logic natural deduction inference rules *)
+  (* natural deduction inference rules *)
   val assumption : formula -> judgement                           (* A |- A *)
   val fantasy : formula -> judgement -> judgement                 (* from A |- B derive |- A => B *)
   val assuming : formula -> (judgement -> judgement) -> judgement (* |- A => f (... |- A) *)
@@ -81,6 +97,7 @@ module type S = sig
   val intro_exists : var -> var -> judgement -> judgement         (* from |- A(y) derive |- exists x. A *)
   val elim_exists : var -> formula -> judgement -> judgement      (* from A |- B derive exists x. A |- B *)
 
+  (* sat solver handles logical operators *)
   val inference : Pattern.t list -> Pattern.t -> inference        (* verifies that the conclusion follows *)
   val infer : inference -> judgement list -> formula -> judgement (* apply this inference *)
 
@@ -91,28 +108,14 @@ module type S = sig
   val string_of_inference : inference -> string
 end
 
-module type ORDER_STRING = sig
-  type t
-  val compare : t -> t -> int
-  val to_string : t -> String.t
-end
-
 module Make(Var : ORDER_STRING) : S
-with type var = Var.t
+with type var = Var.t and type formula = Formula(Var).t
 = struct
   module VarSet = Set.Make(Var)
   type var = Var.t
 
   module Formula = struct
-    let compare_var = Var.compare
-
-    type t =
-      | Equal of var * var
-      | Member of var * var
-      | Forall of var * t
-      | Exists of var * t
-      | Op of t LogicOp.t
-    [@@deriving ord]
+    include Formula(Var)
 
     let rec free_vars : t -> VarSet.t = function
       | Equal (x, y) -> VarSet.of_list [x; y]
@@ -139,22 +142,9 @@ with type var = Var.t
         | Exists (x, formula) -> Exists (x, if x = var then formula else go formula)
         | Op expr -> Op (LogicOp.map go expr)
       in go
-
-    let rec to_string = function
-      | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (Var.to_string lhs) (Var.to_string rhs)
-      | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (Var.to_string lhs) (Var.to_string rhs)
-      | Forall (var, formula) -> Printf.sprintf "∀%s %s" (Var.to_string var) (to_string formula)
-      | Exists (var, formula) -> Printf.sprintf "∃%s %s" (Var.to_string var) (to_string formula)
-      | Op expr -> LogicOp.to_string (LogicOp.map to_string expr)
   end
 
   type formula = Formula.t
-
-  let equal lhs rhs = Formula.Equal(lhs, rhs)
-  let member lhs rhs = Formula.Member(lhs, rhs)
-  let forall var formula = Formula.Forall(var, formula)
-  let exists var formula = Formula.Exists(var, formula)
-  let op expr = Formula.Op(expr)
 
   module FormulaSet = Set.Make(Formula)
 
@@ -182,7 +172,7 @@ with type var = Var.t
       then failwith "free variable in context"
       else {
         context;
-        conclusion = Formula.Forall (var, conclusion);
+        conclusion = Forall (var, conclusion);
       }
 
   let elim_forall var { context; conclusion } =
@@ -193,7 +183,7 @@ with type var = Var.t
   let intro_exists var witness { context; conclusion } =
     {
       context;
-      conclusion = Formula.Exists (var, Formula.replace witness var conclusion);
+      conclusion = Exists (var, Formula.replace witness var conclusion);
     }
 
   let elim_exists var formula { context ; conclusion } =
@@ -201,7 +191,7 @@ with type var = Var.t
     if FormulaSet.exists (Formula.has_free_var var) context
       then failwith "free variable in context"
       else {
-        context = FormulaSet.add (Formula.Exists(var, formula)) context;
+        context = FormulaSet.add (Exists(var, formula)) context;
         conclusion
       }
 
@@ -247,7 +237,7 @@ with type var = Var.t
         Option.bind assignment (unify pattern formula))
       (Some(IntMap.empty))
 
-  let unifies (patterns : Pattern.t list) (formulas : Formula.t list) =
+  let unifies (patterns : Pattern.t list) (formulas : formula list) =
     Option.is_some (unify_all patterns formulas)
 
   let infer (i_premises, i_conclusion) premises conclusion =
@@ -264,8 +254,8 @@ with type var = Var.t
   let string_of_formula = Formula.to_string
   let string_of_judgement { context; conclusion } =
     Printf.sprintf "%s ⊢ %s"
-      (String.concat ", " (List.map Formula.to_string (FormulaSet.elements context)))
-      (Formula.to_string conclusion)
+      (String.concat ", " (List.map string_of_formula (FormulaSet.elements context)))
+      (string_of_formula conclusion)
   let string_of_inference (premises, conclusion) =
     Printf.sprintf "%s ⊢ %s"
       (String.concat ", " (List.map Pattern.to_string premises))
