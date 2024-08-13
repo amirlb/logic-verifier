@@ -1,6 +1,6 @@
 module IntSet = Set.Make(Int)
 
-module Conn = struct
+module LogicOp = struct
   type 'a t =
     | And of 'a * 'a
     | Or of 'a * 'a
@@ -42,21 +42,21 @@ end
 module Pattern = struct
   type t =
     | MetaVar of int
-    | Conn of t Conn.t
+    | Op of t LogicOp.t
 
   let evaluate assignment = 
     let rec go = function
       | MetaVar i -> assignment i
-      | Conn conn -> Conn.eval (Conn.map go conn)
+      | Op expr -> LogicOp.(eval (map go expr))
     in go
 
   let rec metavars = function
     | MetaVar i -> IntSet.singleton i
-    | Conn conn -> Conn.collapse IntSet.union (Conn.map metavars conn)
+    | Op expr -> LogicOp.(collapse IntSet.union (map metavars expr))
 
   let rec to_string = function
     | MetaVar i -> Printf.sprintf "%d" i
-    | Conn conn -> Conn.to_string (Conn.map to_string conn)
+    | Op expr -> LogicOp.to_string (LogicOp.map to_string expr)
 end
 
 module type S = sig
@@ -70,12 +70,7 @@ module type S = sig
   val member : var -> var -> formula
   val forall : var -> formula -> formula
   val exists : var -> formula -> formula
-  val conn : formula Conn.t -> formula
-  (* val implies : formula -> formula -> formula
-  val iff : formula -> formula -> formula
-  val and_ : formula -> formula -> formula
-  val or_ : formula -> formula -> formula
-  val not_ : formula -> formula *)
+  val op : formula LogicOp.t -> formula
 
   (* predicate logic natural deduction inference rules *)
   val assumption : formula -> judgement                           (* A |- A *)
@@ -116,7 +111,7 @@ with type var = Var.t
       | Member of var * var
       | Forall of var * t
       | Exists of var * t
-      | Conn of t Conn.t
+      | Op of t LogicOp.t
     [@@deriving ord]
 
     let rec free_vars : t -> VarSet.t = function
@@ -124,7 +119,7 @@ with type var = Var.t
       | Member (x, y) -> VarSet.of_list [x; y]
       | Forall (var, formula) -> VarSet.remove var (free_vars formula)
       | Exists (var, formula) -> VarSet.remove var (free_vars formula)
-      | Conn conn -> Conn.collapse VarSet.union (Conn.map free_vars conn)
+      | Op expr -> LogicOp.(collapse VarSet.union (map free_vars expr))
 
     let has_free_var v =
       let rec go = function
@@ -132,7 +127,7 @@ with type var = Var.t
         | Member (x, y) -> x = v || y = v
         | Forall (x, formula) -> x != v && go formula
         | Exists (x, formula) -> x != v && go formula
-        | Conn conn -> Conn.collapse (fun x y -> x || y) (Conn.map go conn)
+        | Op expr -> LogicOp.(collapse (fun x y -> x || y) (map go expr))
       in go
 
     let replace var new_var =
@@ -142,7 +137,7 @@ with type var = Var.t
         | Member (x, y) -> Member (replace_var x, replace_var y)
         | Forall (x, formula) -> Forall (x, if x = var then formula else go formula)
         | Exists (x, formula) -> Exists (x, if x = var then formula else go formula)
-        | Conn conn -> Conn (Conn.map go conn)
+        | Op expr -> Op (LogicOp.map go expr)
       in go
 
     let rec to_string = function
@@ -150,16 +145,16 @@ with type var = Var.t
       | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (Var.to_string lhs) (Var.to_string rhs)
       | Forall (var, formula) -> Printf.sprintf "∀%s %s" (Var.to_string var) (to_string formula)
       | Exists (var, formula) -> Printf.sprintf "∃%s %s" (Var.to_string var) (to_string formula)
-      | Conn conn -> Conn.to_string (Conn.map to_string conn)
+      | Op expr -> LogicOp.to_string (LogicOp.map to_string expr)
   end
 
   type formula = Formula.t
 
-  let equal lhs rhs = Formula.Equal (lhs, rhs)
-  let member lhs rhs = Formula.Member (lhs, rhs)
-  let forall var formula = Formula.Forall (var, formula)
-  let exists var formula = Formula.Exists (var, formula)
-  let conn c = Formula.Conn c
+  let equal lhs rhs = Formula.Equal(lhs, rhs)
+  let member lhs rhs = Formula.Member(lhs, rhs)
+  let forall var formula = Formula.Forall(var, formula)
+  let exists var formula = Formula.Exists(var, formula)
+  let op expr = Formula.Op(expr)
 
   module FormulaSet = Set.Make(Formula)
 
@@ -177,7 +172,7 @@ with type var = Var.t
   let fantasy formula { context; conclusion } =
     {
       context = FormulaSet.remove formula context;
-      conclusion = Formula.Conn(Implies(formula, conclusion));
+      conclusion = Formula.Op(Implies(formula, conclusion));
     }
 
   let assuming formula deduction = fantasy formula (deduction (assumption formula))
@@ -239,11 +234,11 @@ with type var = Var.t
         (match IntMap.find_opt i assignment with
           | Some(formula') -> if formula = formula' then Some assignment else None
           | None -> Some(IntMap.add i formula assignment))
-    | Pattern.Conn(pconn), Formula.Conn(fconn) ->
+    | Pattern.Op(pexpr), Formula.Op(fexpr) ->
         let kleisli f g x = Option.bind (f x) g in
         Option.bind
-          (Conn.map2_unify unify pconn fconn)
-          (fun conn -> Conn.collapse kleisli conn assignment)
+          (LogicOp.map2_unify unify pexpr fexpr)
+          (fun expr -> LogicOp.collapse kleisli expr assignment)
     | _, _ -> None
 
   let unify_all =
