@@ -6,9 +6,16 @@ module Name = struct
   let to_string x = x
 end
 
-module V = Logic.Verifier.Make(Name)
+module Name2 = struct
+  type t = (string * int)
+  let compare = Stdlib.compare
+  let to_string (name, arity) = Printf.sprintf "%s/%d" name arity
+  let arity (_, arity) = arity
+end
 
-module F = Logic.Verifier.Formula(Name)
+module V = Logic.Verifier.Make(Name)(Name2)
+
+module F = Logic.Verifier.Formula(Name)(Name2)
 
 let example_1 =
   let x_eq_x = F.equal "x" "x" in
