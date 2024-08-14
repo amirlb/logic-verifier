@@ -58,7 +58,7 @@ let example_4 =
   let phi = ("P", 1) in
   let axiom = F.(forall2 phi (forall "x" (forall "y" (
     implies (equal "x"  "y") (iff (apply phi ["x"]) (apply phi ["y"])))))) in
-  let not_empty a = F.(exists "x" (member "x"  a)) in
+  let not_empty a = F.(exists "x" (member "x" a)) in
   let claim = F.(implies axiom (forall "a" (forall "b" (
     implies (and_ (not_empty "a") (equal "a" "b")) (not_empty "b"))))) in
 
@@ -71,7 +71,7 @@ let example_4 =
       assuming (F.(and_ (not_empty "a") (equal "a" "b"))) (fun p ->
         let a_not_empty = infer conj_1 [p] (not_empty "a") in
         let a_eq_b = infer conj_2 [p] (F.(equal "a" "b")) in
-        let not_empty_eq = elim_forall2 (not_empty "v") ["v"] axiom in
+        let not_empty_eq = elim_forall2 (not_empty "a") ["a"] axiom in
         let iff = V.infer m_p
           [elim_forall "b" (elim_forall "a" not_empty_eq); a_eq_b]
           F.(iff (not_empty "a") (not_empty "b")) in
@@ -79,6 +79,35 @@ let example_4 =
   ))))) in
 
   (claim, proof)
+
+let example_5 =
+  let comprehension p_1 =
+    let phi = ("P", 1) in
+    F.(not_ (forall2 phi (not_ (forall "y" (iff (p_1 "y") (apply phi ["y"])))))) in
+
+  let prove_comprehension p_1 = V.(
+    let a_iff_a = inference [] (Op(Iff(MetaVar 1, MetaVar 1))) in
+    let conj = inference [MetaVar 1; MetaVar 2] (Op(And(MetaVar 1, MetaVar 2))) in
+    let by_contradiction = inference [Op(Implies(MetaVar 1, Op(And(MetaVar 2, Op(Not(MetaVar 2))))))] (Op(Not(MetaVar 1))) in
+
+    let tautology = F.(iff (p_1 "y") (p_1 "y")) in
+    let gen_tautology = F.(forall "y" tautology) in
+
+    let not_comp = F.(forall2 ("P", 1) (not_ (forall "y" (iff (p_1 "y") (apply ("P", 1) ["y"]))))) in
+    infer by_contradiction
+      [deduction
+        not_comp
+        (infer conj
+          [
+            intro_forall "y" (infer a_iff_a [] tautology);
+            elim_forall2 (p_1 "parameter") ["parameter"] (assumption not_comp)
+          ]
+          F.(and_ gen_tautology (not_ gen_tautology)))]
+      (comprehension p_1)
+  ) in
+
+  let not_empty a = F.(exists "x" (member "x" a)) in
+  (comprehension not_empty, prove_comprehension not_empty)
 
 let validate (claim, proof) =
   assert (V.does_prove proof claim);
@@ -89,3 +118,4 @@ let main () =
   validate example_2;
   validate example_3;
   validate example_4;
+  validate example_5;
