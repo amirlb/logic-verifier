@@ -32,10 +32,10 @@ module LogicOp = struct
     | Not(value) -> not value
 
   let to_string = function
-    | Implies(lhs, rhs) -> Printf.sprintf "(%s ⇒ %s)" lhs rhs
-    | Iff(lhs, rhs) -> Printf.sprintf "(%s ⇔ %s)" lhs rhs
     | And(lhs, rhs) -> Printf.sprintf "(%s ∧ %s)" lhs rhs
     | Or(lhs, rhs) -> Printf.sprintf "(%s ∨ %s)" lhs rhs
+    | Implies(lhs, rhs) -> Printf.sprintf "(%s ⇒ %s)" lhs rhs
+    | Iff(lhs, rhs) -> Printf.sprintf "(%s ⇔ %s)" lhs rhs
     | Not(inner) -> Printf.sprintf "¬%s" inner
 end
 
@@ -66,20 +66,77 @@ module type ORDER_STRING = sig
 end
 
 module Formula(Var : ORDER_STRING) = struct
+  module VarSet = Set.Make(Var)
+
+  type var =
+    | Bound of int
+    | Free of Var.t
+  [@@deriving ord]
+
+  let free_var = function
+    | Bound _ -> VarSet.empty
+    | Free var -> VarSet.singleton var
+
   type t =
-    | Equal of Var.t * Var.t
-    | Member of Var.t * Var.t
-    | Forall of Var.t * t
-    | Exists of Var.t * t
+    | Equal of var * var
+    | Member of var * var
+    | Forall of t
+    | Exists of t
     | Op of t LogicOp.t
   [@@deriving ord]
 
-  let rec to_string = function
-    | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (Var.to_string lhs) (Var.to_string rhs)
-    | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (Var.to_string lhs) (Var.to_string rhs)
-    | Forall (var, formula) -> Printf.sprintf "∀%s %s" (Var.to_string var) (to_string formula)
-    | Exists (var, formula) -> Printf.sprintf "∃%s %s" (Var.to_string var) (to_string formula)
-    | Op expr -> LogicOp.to_string (LogicOp.map to_string expr)
+  let string_of_var depth = function
+    | Bound index -> Printf.sprintf "b%d" (depth - 1 - index)
+    | Free var -> Printf.sprintf "f%s" (Var.to_string var)
+
+  let to_string =
+    let rec go depth = function
+      | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (string_of_var depth lhs) (string_of_var depth rhs)
+      | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (string_of_var depth lhs) (string_of_var depth rhs)
+      | Forall inner -> Printf.sprintf "∀%d %s" depth (go (depth + 1) inner)
+      | Exists inner -> Printf.sprintf "∃%d %s" depth (go (depth + 1) inner)
+      | Op expr -> LogicOp.to_string (LogicOp.map (go depth) expr)
+    in go 0
+
+  let rec free_vars = function
+    | Equal (x, y) -> VarSet.union (free_var x) (free_var y)
+    | Member (x, y) -> VarSet.union (free_var x) (free_var y)
+    | Forall inner -> free_vars inner
+    | Exists inner -> free_vars inner
+    | Op expr -> LogicOp.(collapse VarSet.union (map free_vars expr))
+
+  let has_free_var var formula =
+    VarSet.mem var (free_vars formula)
+
+  let transform_vars f =
+    let rec go depth = function
+      | Equal (x, y) -> Equal (f depth x, f depth y)
+      | Member (x, y) -> Member (f depth x, f depth y)
+      | Forall inner -> Forall (go (depth + 1) inner)
+      | Exists inner -> Exists (go (depth + 1) inner)
+      | Op expr -> Op (LogicOp.map (go depth) expr)
+    in go 0
+
+  let bind var =
+    transform_vars (fun depth v -> match v with
+      | Free x when x = var -> Bound depth
+      | _ -> v)
+
+  let substitute var =
+    let var = Free var in
+    transform_vars (fun depth v -> match v with
+      | Bound index when index = depth -> var
+      | _ -> v)
+
+  let equal x y = Equal(Free x, Free y)
+  let member x y = Member(Free x, Free y)
+  let forall var inner = Forall(bind var inner)
+  let exists var inner = Exists(bind var inner)
+  let and_ lhs rhs = Op(And(lhs, rhs))
+  let or_ lhs rhs = Op(Or(lhs, rhs))
+  let implies lhs rhs = Op(Implies(lhs, rhs))
+  let iff lhs rhs = Op(Iff(lhs, rhs))
+  let not_ inner = Op(Not inner)
 end
 
 module type S = sig
@@ -94,7 +151,7 @@ module type S = sig
   val assuming : formula -> (judgement -> judgement) -> judgement (* |- A => f (... |- A) *)
   val intro_forall : var -> judgement -> judgement                (* from |- A derive |- forall x. A *)
   val elim_forall : var -> judgement -> judgement                 (* from |- forall x. A derive |- A(y) *)
-  val intro_exists : var -> var -> judgement -> judgement         (* from |- A(y) derive |- exists x. A *)
+  val intro_exists : var -> judgement -> judgement                (* from |- A(y) derive |- exists x. A *)
   val elim_exists : var -> formula -> judgement -> judgement      (* from A |- B derive exists x. A |- B *)
 
   (* sat solver handles logical operators *)
@@ -114,36 +171,7 @@ with type var = Var.t and type formula = Formula(Var).t
   module VarSet = Set.Make(Var)
   type var = Var.t
 
-  module Formula = struct
-    include Formula(Var)
-
-    let rec free_vars : t -> VarSet.t = function
-      | Equal (x, y) -> VarSet.of_list [x; y]
-      | Member (x, y) -> VarSet.of_list [x; y]
-      | Forall (var, formula) -> VarSet.remove var (free_vars formula)
-      | Exists (var, formula) -> VarSet.remove var (free_vars formula)
-      | Op expr -> LogicOp.(collapse VarSet.union (map free_vars expr))
-
-    let has_free_var v =
-      let rec go = function
-        | Equal (x, y) -> x = v || y = v
-        | Member (x, y) -> x = v || y = v
-        | Forall (x, formula) -> x != v && go formula
-        | Exists (x, formula) -> x != v && go formula
-        | Op expr -> LogicOp.(collapse (fun x y -> x || y) (map go expr))
-      in go
-
-    let replace var new_var =
-      let replace_var x = if x = var then new_var else x in
-      let rec go = function
-        | Equal (x, y) -> Equal (replace_var x, replace_var y)
-        | Member (x, y) -> Member (replace_var x, replace_var y)
-        | Forall (x, formula) -> Forall (x, if x = var then formula else go formula)
-        | Exists (x, formula) -> Exists (x, if x = var then formula else go formula)
-        | Op expr -> Op (LogicOp.map go expr)
-      in go
-  end
-
+  module Formula = Formula(Var)
   type formula = Formula.t
 
   module FormulaSet = Set.Make(Formula)
@@ -162,38 +190,31 @@ with type var = Var.t and type formula = Formula(Var).t
   let fantasy formula { context; conclusion } =
     {
       context = FormulaSet.remove formula context;
-      conclusion = Formula.Op(Implies(formula, conclusion));
+      conclusion = Formula.implies formula conclusion;
     }
 
   let assuming formula deduction = fantasy formula (deduction (assumption formula))
 
   let intro_forall var { context; conclusion } =
-    if FormulaSet.exists (Formula.has_free_var var) context
-      then failwith "free variable in context"
-      else {
-        context;
-        conclusion = Forall (var, conclusion);
-      }
+    if FormulaSet.exists (Formula.has_free_var var) context then failwith "free variable in context";
+    { context; conclusion = Formula.forall var conclusion }
 
   let elim_forall var { context; conclusion } =
     match conclusion with
-    | Forall(x, formula) -> { context ; conclusion = Formula.replace x var formula }
+    | Forall inner -> { context ; conclusion = Formula.substitute var inner }
     | _ -> failwith "not a forall"
 
-  let intro_exists var witness { context; conclusion } =
-    {
-      context;
-      conclusion = Exists (var, Formula.replace witness var conclusion);
-    }
+  let intro_exists witness { context; conclusion } =
+    { context; conclusion = Formula.exists witness conclusion }
 
   let elim_exists var formula { context ; conclusion } =
+    if Formula.has_free_var var conclusion then failwith "free variable in conclusion";
     let context = FormulaSet.remove formula context in
-    if FormulaSet.exists (Formula.has_free_var var) context
-      then failwith "free variable in context"
-      else {
-        context = FormulaSet.add (Exists(var, formula)) context;
-        conclusion
-      }
+    if FormulaSet.exists (Formula.has_free_var var) context then failwith "free variable in context";
+    {
+      context = FormulaSet.add (Formula.exists var formula) context;
+      conclusion
+    }
 
   type inference = Pattern.t list * Pattern.t
 
@@ -246,7 +267,7 @@ with type var = Var.t and type formula = Formula(Var).t
         context = List.fold_left (fun context premise -> FormulaSet.union context premise.context) FormulaSet.empty premises;
         conclusion
       }
-      else failwith "Interence does not fit pattern"
+      else failwith "Inference does not fit pattern"
 
   let does_prove { context; conclusion } formula =
     FormulaSet.is_empty context && VarSet.is_empty (Formula.free_vars conclusion) && conclusion = formula

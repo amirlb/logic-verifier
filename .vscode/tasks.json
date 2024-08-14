@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run",
+			"type": "shell",
+			"command": "clear && dune exec logic",
+			"options": {
+				"env": {
+					"OCAMLRUNPARAM": "b"
+				}
+			},
+			"problemMatcher": []
+		}
+	]
+}
