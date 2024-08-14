@@ -78,7 +78,7 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
   type 'a debruijn =
     | Bound of int
     | Free of 'a
-    [@@deriving ord]
+  [@@deriving ord]
 
   let seq_of_debruijn = function
     | Bound _ -> Seq.empty
@@ -101,21 +101,15 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
     | Forall2 of int * t
   [@@deriving ord]
 
-  let string_of_var_1 depth = function
-    | Bound index -> Printf.sprintf "b%d" (depth - 1 - index)
-    | Free var -> Printf.sprintf "f%s" (Var1.to_string var)
-
-  let string_of_var_2 depth = function
-    | Bound index -> Printf.sprintf "b%d" (depth - 1 - index)
-    | Free var -> Printf.sprintf "f%s" (Var2.to_string var)
-
-  let string_of_atom depth = function
-    | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (string_of_var_1 depth lhs) (string_of_var_1 depth rhs)
-    | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (string_of_var_1 depth lhs) (string_of_var_1 depth rhs)
-    | Apply (func, args) -> Printf.sprintf "%s(%s)" (string_of_var_2 depth func) (String.concat ", " (List.map (string_of_var_1 depth) args))
-
   let to_string =
-    let rec go depth = function
+    let db_str to_string depth = function
+      | Bound index -> Printf.sprintf "b%d" (depth - 1 - index)
+      | Free var -> Printf.sprintf "f%s" (to_string var)
+    in let string_of_atom depth = function
+      | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (db_str Var1.to_string depth lhs) (db_str Var1.to_string depth rhs)
+      | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (db_str Var1.to_string depth lhs) (db_str Var1.to_string depth rhs)
+      | Apply (func, args) -> Printf.sprintf "%s(%s)" (db_str Var2.to_string depth func) (String.concat ", " (List.map (db_str Var1.to_string depth) args))
+    in let rec go depth = function
       | Atom atom -> string_of_atom depth atom
       | Op expr -> LogicOp.to_string (LogicOp.map (go depth) expr)
       | Forall inner -> Printf.sprintf "∀%d %s" depth (go (depth + 1) inner)
@@ -123,37 +117,39 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
       | Forall2 (arity, inner) -> Printf.sprintf "∀%d/%d %s" depth arity (go (depth + 1) inner)
     in go 0
 
-    let free_vars_1_of_atom = function
-      | Equal (x, y) -> Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y))
-      | Member (x, y) -> Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y))
-      | Apply (_, args) -> Var1Set.of_seq (Seq.concat (Seq.map seq_of_debruijn (List.to_seq args)))
+  let free_vars_of_atom = function
+    | Equal (x, y) ->
+        (Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y)), Var2Set.empty)
+    | Member (x, y) ->
+        (Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y)), Var2Set.empty)
+    | Apply (pred, args) ->
+        (Var1Set.of_seq (Seq.concat (Seq.map seq_of_debruijn (List.to_seq args))),
+         Var2Set.of_seq (seq_of_debruijn pred))
 
-    let rec free_vars_1 = function
-      | Atom atom -> free_vars_1_of_atom atom
-      | Op expr -> LogicOp.(collapse Var1Set.union (map free_vars_1 expr))
-      | Forall inner -> free_vars_1 inner
-      | Exists inner -> free_vars_1 inner
-      | Forall2 (_, inner) -> free_vars_1 inner
+  let var_sets_union (f11, f21) (f12, f22) =
+    (Var1Set.union f11 f12, Var2Set.union f21 f22)
 
-  let has_free_var_1 var formula =
-    Var1Set.mem var (free_vars_1 formula)
+  let rec free_vars = function
+    | Atom atom -> free_vars_of_atom atom
+    | Op expr -> LogicOp.(collapse var_sets_union (map free_vars expr))
+    | Forall inner -> free_vars inner
+    | Exists inner -> free_vars inner
+    | Forall2 (_, inner) -> free_vars inner
 
-  let free_vars_2_of_atom = function
-    | Apply (Free x, _) -> Var2Set.singleton x
-    | _ -> Var2Set.empty
+  type parametrized = {
+    arguments : Var1.t list;
+    template : t;
+  }
 
-  let rec free_vars_2 = function
-    | Atom atom -> free_vars_2_of_atom atom
-    | Op expr -> LogicOp.(collapse Var2Set.union (map free_vars_2 expr))
-    | Forall inner -> free_vars_2 inner
-    | Exists inner -> free_vars_2 inner
-    | Forall2 (_, inner) -> free_vars_2 inner
-
-  let has_free_var_2 var formula =
-    Var2Set.mem var (free_vars_2 formula)
+  let parametrized formula arguments =
+    let free_vars_1, free_vars_2 = free_vars formula in
+    assert (Var1Set.subset free_vars_1 (Var1Set.of_list arguments));
+    assert (Var2Set.is_empty free_vars_2);
+    { arguments; template = formula }
 
   let is_closed formula =
-    Var1Set.is_empty (free_vars_1 formula) && Var2Set.is_empty (free_vars_2 formula)
+    let free_vars_1, free_vars_2 = free_vars formula in
+    Var1Set.is_empty free_vars_1 && Var2Set.is_empty free_vars_2
 
   let transform_atoms f =
     let rec go depth = function
@@ -172,41 +168,39 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
     in transform_atoms (fun depth atom -> Atom (transform_atom depth atom))
 
   let bind_1 var =
-    transform_vars_1 (fun depth v -> match v with
-      | Free x when x = var -> Bound depth
-      | _ -> v)
+    transform_vars_1
+      (fun depth v -> match v with Free x when x = var -> Bound depth | _ -> v)
+
+  let bind_2 var =
+      transform_atoms
+        (fun depth atom -> match atom with
+          | Apply (Free x, args) when x = var -> Atom (Apply (Bound depth, args))
+          | _ -> Atom atom)
 
   let substitute_1 var = function
     | Forall inner ->
         let var = Free var in
-        transform_vars_1 (fun depth v -> match v with
-          | Bound index when index = depth -> var
-          | _ -> v
-        ) inner
+        let transform_var depth v =
+          match v with Bound index when index = depth -> var | _ -> v in
+        transform_vars_1 transform_var inner
     | _ -> failwith "not a forall"
 
-  let bind_2 var =
-    let transform_atom depth = function
-      | Apply (Free x, args) when x = var -> Apply (Bound depth, args)
-      | _ as atom -> atom
-    in transform_atoms (fun depth atom -> Atom (transform_atom depth atom))
+  let apply_parametrized_formula {arguments; template} vars =
+    if List.length arguments != List.length vars then failwith "wrong number of arguments";
+    let subst = Var1Map.of_list (List.combine arguments vars) in
+    transform_vars_1 (fun depth v -> match v with
+      | Free var ->
+        (match Var1Map.find var subst with
+          | Free _ as x -> x
+          | Bound index -> Bound (depth + index))
+      | _ -> v
+    ) template
 
-  let substitute_2 formula arguments = function
+  let substitute_2 f = function
     | Forall2 (arity, inner) ->
-        if List.length arguments != arity then failwith "wrong number of arguments";
-        if not (Var2Set.is_empty (free_vars_2 formula)) then failwith "free 2nd order variable";
-        if not (Var1Set.equal (free_vars_1 formula) (Var1Set.of_list arguments)) then failwith "wrong free variables";
-        let apply args =
-          let subst = Var1Map.of_list (List.combine arguments args) in
-          transform_vars_1 (fun depth v -> match v with
-            | Free var ->
-              (match Var1Map.find var subst with
-                | Free _ as x -> x
-                | Bound index -> Bound (depth + index))
-            | _ -> v
-          ) formula in
+        if List.length f.arguments != arity then failwith "wrong number of arguments";
         let transform_atom depth = function
-          | Apply (Bound index, args) when index = depth -> apply args
+          | Apply (Bound index, args) when index = depth -> apply_parametrized_formula f args
           | _ as atom -> Atom atom
         in transform_atoms transform_atom inner
     | _ -> failwith "not a forall"
@@ -246,6 +240,8 @@ module type S = sig
   val inference : Pattern.t list -> Pattern.t -> inference        (* verifies that the conclusion follows *)
   val infer : inference -> judgement list -> formula -> judgement (* apply this inference *)
 
+  val premises_of_judgement : judgement -> formula Seq.t
+  val conclusion_of_judgement : judgement -> formula
   val does_prove : judgement -> formula -> bool                   (* whether no assumptions are left *)
 
   val string_of_formula : formula -> string
@@ -259,33 +255,48 @@ and type var2 = Var2.t
 and type formula = Formula(Var1)(Var2).t
 = struct
   module Formula = Formula(Var1)(Var2)
-  module FormulaSet = Set.Make(Formula)
+  module Var1Set = Set.Make(Var1)
+  module Var2Set = Set.Make(Var2)
 
   type var1 = Var1.t
   type var2 = Var2.t
   type formula = Formula.t
 
+  module Context = struct
+    module FormulaMap = Map.Make(Formula)
+    type t = (Var1Set.t * Var2Set.t) FormulaMap.t
+    let singleton formula = FormulaMap.singleton formula (Formula.free_vars formula)
+    let add formula = FormulaMap.add formula (Formula.free_vars formula)
+    let remove formula = FormulaMap.remove formula
+    let has_free_var_1 var = FormulaMap.exists (fun _ (free1, _) -> Var1Set.mem var free1)
+    let has_free_var_2 var = FormulaMap.exists (fun _ (_, free2) -> Var2Set.mem var free2)
+    let is_empty = FormulaMap.is_empty
+    let premises context = Seq.map fst (FormulaMap.to_seq context)
+    let union = FormulaMap.union (fun _ x _ -> Some(x))
+    let union_all = List.fold_left union FormulaMap.empty
+  end
+
   type judgement = {
-    context : FormulaSet.t;
+    context : Context.t;
     conclusion : formula;
   }
 
   let assumption formula =
     {
-      context = FormulaSet.singleton formula;
+      context = Context.singleton formula;
       conclusion = formula;
     }
 
   let deduction formula { context; conclusion } =
     {
-      context = FormulaSet.remove formula context;
+      context = Context.remove formula context;
       conclusion = Formula.implies formula conclusion;
     }
 
   let assuming formula derivation = deduction formula (derivation (assumption formula))
 
   let intro_forall var { context; conclusion } =
-    if FormulaSet.exists (Formula.has_free_var_1 var) context then failwith "free variable in context";
+    if Context.has_free_var_1 var context then failwith "free variable in context";
     { context; conclusion = Formula.forall var conclusion }
 
   let elim_forall var { context; conclusion } =
@@ -295,83 +306,93 @@ and type formula = Formula(Var1)(Var2).t
     { context; conclusion = Formula.exists witness conclusion }
 
   let elim_exists var formula { context ; conclusion } =
-    if Formula.has_free_var_1 var conclusion then failwith "free variable in conclusion";
-    let context = FormulaSet.remove formula context in
-    if FormulaSet.exists (Formula.has_free_var_1 var) context then failwith "free variable in context";
+    if Var1Set.mem var (fst (Formula.free_vars conclusion)) then failwith "free variable in conclusion";
+    let context = Context.remove formula context in
+    if Context.has_free_var_1 var context then failwith "free variable in context";
     {
-      context = FormulaSet.add (Formula.exists var formula) context;
+      context = Context.add (Formula.exists var formula) context;
       conclusion
     }
 
   let intro_forall2 var { context; conclusion } =
-    if FormulaSet.exists (Formula.has_free_var_2 var) context then failwith "free variable in context";
+    if Context.has_free_var_2 var context then failwith "free variable in context";
     { context; conclusion = Formula.forall2 var conclusion }
 
   let elim_forall2 formula arguments { context; conclusion } =
-    { context ; conclusion = Formula.substitute_2 formula arguments conclusion }
+    let f = Formula.parametrized formula arguments in
+    { context ; conclusion = Formula.substitute_2 f conclusion }
 
-  type inference = Pattern.t list * Pattern.t
+  module PatternRules = struct
+    type t = Pattern.t list * Pattern.t
 
-  module IntMap = Map.Make(Int)
-  let all_assignments metavars =
-    let metavar_inds = IntMap.of_seq (Seq.mapi (fun i var -> (var, i)) (IntSet.to_seq metavars)) in
-    Seq.init
-      (1 lsl (IntSet.cardinal metavars))
-      (fun i var -> (i lsr (IntMap.find var metavar_inds)) land 1 = 1)
+    module IntMap = Map.Make(Int)
 
-  let disproves (premises, conclusion) assignment =
-    List.for_all (Pattern.evaluate assignment) premises && not (Pattern.evaluate assignment conclusion)
+    let all_assignments metavars =
+      let metavar_inds = IntMap.of_seq (Seq.mapi (fun i var -> (var, i)) (IntSet.to_seq metavars)) in
+      Seq.init
+        (1 lsl (IntSet.cardinal metavars))
+        (fun i var -> (i lsr (IntMap.find var metavar_inds)) land 1 = 1)
 
-  let inference premises conclusion =
-    let metavars =
-      List.fold_left
-        (fun acc pattern -> IntSet.union acc (Pattern.metavars pattern))
-        (Pattern.metavars conclusion)
-        premises in
-    if IntSet.cardinal metavars > 20 then failwith "Too complicated, cannot verify";
-    let inference = (premises, conclusion) in
-    if Seq.exists (disproves inference) (all_assignments metavars) then failwith "Inference is not valid";
-    inference
+    let disproves (premises, conclusion) assignment =
+      List.for_all (Pattern.evaluate assignment) premises && not (Pattern.evaluate assignment conclusion)
 
-  let rec unify pattern formula assignment =
-    match pattern, formula with
-    | Pattern.MetaVar i, _ ->
-        (match IntMap.find_opt i assignment with
-          | Some(formula') -> if formula = formula' then Some assignment else None
-          | None -> Some(IntMap.add i formula assignment))
-    | Pattern.Op(pexpr), Formula.Op(fexpr) ->
-        let kleisli f g x = Option.bind (f x) g in
-        Option.bind
-          (LogicOp.map2_unify unify pexpr fexpr)
-          (fun expr -> LogicOp.collapse kleisli expr assignment)
-    | _, _ -> None
+    let inference premises conclusion =
+      let metavars =
+        List.fold_left
+          (fun acc pattern -> IntSet.union acc (Pattern.metavars pattern))
+          (Pattern.metavars conclusion)
+          premises in
+      if IntSet.cardinal metavars > 20 then failwith "Too complicated, cannot verify";
+      let inference = (premises, conclusion) in
+      if Seq.exists (disproves inference) (all_assignments metavars) then failwith "Inference is not valid";
+      inference
 
-  let unify_all =
-    List.fold_left2
-      (fun assignment pattern formula ->
-        Option.bind assignment (unify pattern formula))
-      (Some(IntMap.empty))
+    let rec unify pattern formula assignment =
+      match pattern, formula with
+      | Pattern.MetaVar i, _ ->
+          (match IntMap.find_opt i assignment with
+            | Some(formula') -> if formula = formula' then Some assignment else None
+            | None -> Some(IntMap.add i formula assignment))
+      | Pattern.Op(pexpr), Formula.Op(fexpr) ->
+          let kleisli f g x = Option.bind (f x) g in
+          Option.bind
+            (LogicOp.map2_unify unify pexpr fexpr)
+            (fun expr -> LogicOp.collapse kleisli expr assignment)
+      | _, _ -> None
 
-  let unifies patterns formulas =
-    Option.is_some (unify_all patterns formulas)
+    let unifies inference formula_nodes =
+      Option.is_some (
+        List.fold_left2
+          (fun assignment pattern formula_node -> Option.bind assignment (unify pattern formula_node))
+          (unify (snd inference) (snd formula_nodes) IntMap.empty)
+          (fst inference)
+          (fst formula_nodes))
+  end
 
-  let infer (i_premises, i_conclusion) premises conclusion =
-    if unifies (List.cons i_conclusion i_premises) (List.cons conclusion (List.map (fun premise -> premise.conclusion) premises))
-      then {
-        context = List.fold_left (fun context premise -> FormulaSet.union context premise.context) FormulaSet.empty premises;
-        conclusion
-      }
-      else failwith "Inference does not fit pattern"
+  type inference = PatternRules.t
+
+  let inference = PatternRules.inference
+
+  let infer inference premises conclusion =
+    let formula_nodes = (List.map (fun premise -> premise.conclusion) premises, conclusion) in
+    if not (PatternRules.unifies inference formula_nodes) then failwith "Inference does not fit pattern";
+    {
+      context = Context.union_all (List.map (fun premise -> premise.context) premises);
+      conclusion
+    }
+
+  let premises_of_judgement judgement = Context.premises judgement.context
+  let conclusion_of_judgement judgement = judgement.conclusion
 
   let does_prove { context; conclusion } formula =
-    FormulaSet.is_empty context
+    Context.is_empty context
     && Formula.is_closed conclusion
     && conclusion = formula
 
   let string_of_formula = Formula.to_string
   let string_of_judgement { context; conclusion } =
     Printf.sprintf "%s ⊢ %s"
-      (String.concat ", " (List.map string_of_formula (FormulaSet.elements context)))
+      (String.concat ", " (List.of_seq (Seq.map string_of_formula (Context.premises context))))
       (string_of_formula conclusion)
   let string_of_inference (premises, conclusion) =
     Printf.sprintf "%s ⊢ %s"

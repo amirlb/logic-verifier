@@ -4,12 +4,20 @@
 		{
 			"label": "Run",
 			"type": "shell",
+			"group": "none",
 			"command": "clear && dune exec logic",
 			"options": {
 				"env": {
 					"OCAMLRUNPARAM": "b"
 				}
 			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Run tests",
+			"type": "shell",
+			"group": "test",
+			"command": "clear && dune test",
 			"problemMatcher": []
 		}
 	]
