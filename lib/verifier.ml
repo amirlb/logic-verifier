@@ -72,59 +72,104 @@ end
 
 module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
   module Var1Set = Set.Make(Var1)
+  module Var1Map = Map.Make(Var1)
   module Var2Set = Set.Make(Var2)
 
-  type var1 =
+  type 'a debruijn =
     | Bound of int
-    | Free of Var1.t
-  [@@deriving ord]
+    | Free of 'a
+    [@@deriving ord]
 
-  let free_var_1 = function
-    | Bound _ -> Var1Set.empty
-    | Free var -> Var1Set.singleton var
+  let seq_of_debruijn = function
+    | Bound _ -> Seq.empty
+    | Free x -> Seq.return x
 
-  type t =
+  type var1 = Var1.t debruijn  [@@deriving ord]
+  type var2 = Var2.t debruijn  [@@deriving ord]
+
+  type atom =
     | Equal of var1 * var1
     | Member of var1 * var1
+    | Apply of var2 * var1 list
+  [@@deriving ord]
+
+  type t =
+    | Atom of atom
+    | Op of t LogicOp.t
     | Forall of t
     | Exists of t
-    | Op of t LogicOp.t
+    | Forall2 of int * t
   [@@deriving ord]
 
   let string_of_var_1 depth = function
     | Bound index -> Printf.sprintf "b%d" (depth - 1 - index)
     | Free var -> Printf.sprintf "f%s" (Var1.to_string var)
 
+  let string_of_var_2 depth = function
+    | Bound index -> Printf.sprintf "b%d" (depth - 1 - index)
+    | Free var -> Printf.sprintf "f%s" (Var2.to_string var)
+
+  let string_of_atom depth = function
+    | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (string_of_var_1 depth lhs) (string_of_var_1 depth rhs)
+    | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (string_of_var_1 depth lhs) (string_of_var_1 depth rhs)
+    | Apply (func, args) -> Printf.sprintf "%s(%s)" (string_of_var_2 depth func) (String.concat ", " (List.map (string_of_var_1 depth) args))
+
   let to_string =
     let rec go depth = function
-      | Equal (lhs, rhs) -> Printf.sprintf "%s = %s" (string_of_var_1 depth lhs) (string_of_var_1 depth rhs)
-      | Member (lhs, rhs) -> Printf.sprintf "%s ∈ %s" (string_of_var_1 depth lhs) (string_of_var_1 depth rhs)
+      | Atom atom -> string_of_atom depth atom
+      | Op expr -> LogicOp.to_string (LogicOp.map (go depth) expr)
       | Forall inner -> Printf.sprintf "∀%d %s" depth (go (depth + 1) inner)
       | Exists inner -> Printf.sprintf "∃%d %s" depth (go (depth + 1) inner)
-      | Op expr -> LogicOp.to_string (LogicOp.map (go depth) expr)
+      | Forall2 (arity, inner) -> Printf.sprintf "∀%d/%d %s" depth arity (go (depth + 1) inner)
     in go 0
 
-  let rec free_vars_1 = function
-    | Equal (x, y) -> Var1Set.union (free_var_1 x) (free_var_1 y)
-    | Member (x, y) -> Var1Set.union (free_var_1 x) (free_var_1 y)
-    | Forall inner -> free_vars_1 inner
-    | Exists inner -> free_vars_1 inner
-    | Op expr -> LogicOp.(collapse Var1Set.union (map free_vars_1 expr))
+    let free_vars_1_of_atom = function
+      | Equal (x, y) -> Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y))
+      | Member (x, y) -> Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y))
+      | Apply (_, args) -> Var1Set.of_seq (Seq.concat (Seq.map seq_of_debruijn (List.to_seq args)))
+
+    let rec free_vars_1 = function
+      | Atom atom -> free_vars_1_of_atom atom
+      | Op expr -> LogicOp.(collapse Var1Set.union (map free_vars_1 expr))
+      | Forall inner -> free_vars_1 inner
+      | Exists inner -> free_vars_1 inner
+      | Forall2 (_, inner) -> free_vars_1 inner
 
   let has_free_var_1 var formula =
     Var1Set.mem var (free_vars_1 formula)
 
-  let is_closed formula =
-    Var1Set.is_empty (free_vars_1 formula)
+  let free_vars_2_of_atom = function
+    | Apply (Free x, _) -> Var2Set.singleton x
+    | _ -> Var2Set.empty
 
-  let transform_vars_1 f =
+  let rec free_vars_2 = function
+    | Atom atom -> free_vars_2_of_atom atom
+    | Op expr -> LogicOp.(collapse Var2Set.union (map free_vars_2 expr))
+    | Forall inner -> free_vars_2 inner
+    | Exists inner -> free_vars_2 inner
+    | Forall2 (_, inner) -> free_vars_2 inner
+
+  let has_free_var_2 var formula =
+    Var2Set.mem var (free_vars_2 formula)
+
+  let is_closed formula =
+    Var1Set.is_empty (free_vars_1 formula) && Var2Set.is_empty (free_vars_2 formula)
+
+  let transform_atoms f =
     let rec go depth = function
-      | Equal (x, y) -> Equal (f depth x, f depth y)
-      | Member (x, y) -> Member (f depth x, f depth y)
+      | Atom atom -> f depth atom
+      | Op expr -> Op (LogicOp.map (go depth) expr)
       | Forall inner -> Forall (go (depth + 1) inner)
       | Exists inner -> Exists (go (depth + 1) inner)
-      | Op expr -> Op (LogicOp.map (go depth) expr)
+      | Forall2 (arity, inner) -> Forall2 (arity, go (depth + 1) inner)
     in go 0
+
+  let transform_vars_1 f =
+    let transform_atom depth = function
+      | Equal (x, y) -> Equal (f depth x, f depth y)
+      | Member (x, y) -> Member (f depth x, f depth y)
+      | Apply (func, args) -> Apply (func, List.map (f depth) args)
+    in transform_atoms (fun depth atom -> Atom (transform_atom depth atom))
 
   let bind_1 var =
     transform_vars_1 (fun depth v -> match v with
@@ -136,18 +181,47 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
         let var = Free var in
         transform_vars_1 (fun depth v -> match v with
           | Bound index when index = depth -> var
-          | _ -> v) inner
+          | _ -> v
+        ) inner
     | _ -> failwith "not a forall"
 
-  let equal x y = Equal(Free x, Free y)
-  let member x y = Member(Free x, Free y)
-  let forall var inner = Forall(bind_1 var inner)
-  let exists var inner = Exists(bind_1 var inner)
+  let bind_2 var =
+    let transform_atom depth = function
+      | Apply (Free x, args) when x = var -> Apply (Bound depth, args)
+      | _ as atom -> atom
+    in transform_atoms (fun depth atom -> Atom (transform_atom depth atom))
+
+  let substitute_2 formula arguments = function
+    | Forall2 (arity, inner) ->
+        if List.length arguments != arity then failwith "wrong number of arguments";
+        if not (Var2Set.is_empty (free_vars_2 formula)) then failwith "free 2nd order variable";
+        if not (Var1Set.equal (free_vars_1 formula) (Var1Set.of_list arguments)) then failwith "wrong free variables";
+        let apply args =
+          let subst = Var1Map.of_list (List.combine arguments args) in
+          transform_vars_1 (fun depth v -> match v with
+            | Free var ->
+              (match Var1Map.find var subst with
+                | Free _ as x -> x
+                | Bound index -> Bound (depth + index))
+            | _ -> v
+          ) formula in
+        let transform_atom depth = function
+          | Apply (Bound index, args) when index = depth -> apply args
+          | _ as atom -> Atom atom
+        in transform_atoms transform_atom inner
+    | _ -> failwith "not a forall"
+
+  let equal x y = Atom(Equal(Free x, Free y))
+  let member x y = Atom(Member(Free x, Free y))
+  let apply pred args = Atom(Apply(Free pred, List.map (fun arg -> Free arg) args))
   let and_ lhs rhs = Op(And(lhs, rhs))
   let or_ lhs rhs = Op(Or(lhs, rhs))
   let implies lhs rhs = Op(Implies(lhs, rhs))
   let iff lhs rhs = Op(Iff(lhs, rhs))
   let not_ inner = Op(Not inner)
+  let forall var inner = Forall(bind_1 var inner)
+  let exists var inner = Exists(bind_1 var inner)
+  let forall2 pred inner = Forall2(Var2.arity pred, bind_2 pred inner)
 end
 
 module type S = sig
@@ -165,6 +239,8 @@ module type S = sig
   val elim_forall : var1 -> judgement -> judgement                (* from |- forall x. A derive |- A(y) *)
   val intro_exists : var1 -> judgement -> judgement               (* from |- A(y) derive |- exists x. A *)
   val elim_exists : var1 -> formula -> judgement -> judgement     (* from A |- B derive exists x. A |- B *)
+  val intro_forall2 : var2 -> judgement -> judgement
+  val elim_forall2 : formula -> var1 list -> judgement -> judgement
 
   (* sat solver handles logical operators *)
   val inference : Pattern.t list -> Pattern.t -> inference        (* verifies that the conclusion follows *)
@@ -226,6 +302,13 @@ and type formula = Formula(Var1)(Var2).t
       context = FormulaSet.add (Formula.exists var formula) context;
       conclusion
     }
+
+  let intro_forall2 var { context; conclusion } =
+    if FormulaSet.exists (Formula.has_free_var_2 var) context then failwith "free variable in context";
+    { context; conclusion = Formula.forall2 var conclusion }
+
+  let elim_forall2 formula arguments { context; conclusion } =
+    { context ; conclusion = Formula.substitute_2 formula arguments conclusion }
 
   type inference = Pattern.t list * Pattern.t
 

@@ -54,18 +54,31 @@ let example_3 =
 
   (claim, proof)
 
-(* TODO: implement second-order logic *)
-(* let example_4 =
-  let axiom = F.(Forall2("P", Forall("x", Forall("y",
-    Op(Implies(Equal("x", "y"), Op(Iff(Apply("P", ["x"]), Apply("P", ["y"]))))))))) in
-  let property a = F.(Forall("x", Member("x", a))) in
-  let claim = F.(Forall("a", Forall("b",
-    Op(Implies(Op(And(axiom, Op(And(property "a", Equal("a", "b"))))),
-               property "b"))))) in
+let example_4 =
+  let phi = ("P", 1) in
+  let axiom = F.(forall2 phi (forall "x" (forall "y" (
+    implies (equal "x"  "y") (iff (apply phi ["x"]) (apply phi ["y"])))))) in
+  let not_empty a = F.(exists "x" (member "x"  a)) in
+  let claim = F.(implies axiom (forall "a" (forall "b" (
+    implies (and_ (not_empty "a") (equal "a" "b")) (not_empty "b"))))) in
 
-  let proof = () in
+  let conj_1 = V.inference [Op(And(MetaVar 1, MetaVar 2))] (MetaVar 1) in
+  let conj_2 = V.inference [Op(And(MetaVar 1, MetaVar 2))] (MetaVar 2) in
+  let m_p = V.inference [Op(Implies(MetaVar 1, MetaVar 2)); MetaVar 1] (MetaVar 2) in
+  let m_p_iff = V.inference [Op(Iff(MetaVar 1, MetaVar 2)); MetaVar 1] (MetaVar 2) in
+  let proof = V.(assuming axiom (fun axiom ->
+    intro_forall "a" (intro_forall "b" (
+      assuming (F.(and_ (not_empty "a") (equal "a" "b"))) (fun p ->
+        let a_not_empty = infer conj_1 [p] (not_empty "a") in
+        let a_eq_b = infer conj_2 [p] (F.(equal "a" "b")) in
+        let not_empty_eq = elim_forall2 (not_empty "v") ["v"] axiom in
+        let iff = V.infer m_p
+          [elim_forall "b" (elim_forall "a" not_empty_eq); a_eq_b]
+          F.(iff (not_empty "a") (not_empty "b")) in
+        V.infer m_p_iff [iff; a_not_empty] (not_empty "b")
+  ))))) in
 
-  (claim, proof) *)
+  (claim, proof)
 
 let validate (claim, proof) =
   assert (V.does_prove proof claim);
@@ -75,3 +88,4 @@ let main () =
   validate example_1;
   validate example_2;
   validate example_3;
+  validate example_4;
