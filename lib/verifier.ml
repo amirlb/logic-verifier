@@ -80,10 +80,6 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
     | Free of 'a
   [@@deriving ord]
 
-  let seq_of_debruijn = function
-    | Bound _ -> Seq.empty
-    | Free x -> Seq.return x
-
   type var1 = Var1.t debruijn  [@@deriving ord]
   type var2 = Var2.t debruijn  [@@deriving ord]
 
@@ -117,35 +113,24 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
       | Forall2 (arity, inner) -> Printf.sprintf "∀%d/%d %s" depth arity (go (depth + 1) inner)
     in go 0
 
-  let free_vars_of_atom = function
-    | Equal (x, y) ->
-        (Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y)), Var2Set.empty)
-    | Member (x, y) ->
-        (Var1Set.of_seq (Seq.append (seq_of_debruijn x) (seq_of_debruijn y)), Var2Set.empty)
-    | Apply (pred, args) ->
-        (Var1Set.of_seq (Seq.concat (Seq.map seq_of_debruijn (List.to_seq args))),
-         Var2Set.of_seq (seq_of_debruijn pred))
-
-  let var_sets_union (f11, f21) (f12, f22) =
-    (Var1Set.union f11 f12, Var2Set.union f21 f22)
-
-  let rec free_vars = function
-    | Atom atom -> free_vars_of_atom atom
-    | Op expr -> LogicOp.(collapse var_sets_union (map free_vars expr))
-    | Forall inner -> free_vars inner
-    | Exists inner -> free_vars inner
-    | Forall2 (_, inner) -> free_vars inner
-
-  type parametrized = {
-    arguments : Var1.t list;
-    template : t;
-  }
-
-  let parametrized formula arguments =
-    let free_vars_1, free_vars_2 = free_vars formula in
-    assert (Var1Set.subset free_vars_1 (Var1Set.of_list arguments));
-    assert (Var2Set.is_empty free_vars_2);
-    { arguments; template = formula }
+  let free_vars =
+    let build_free_vars_1 vars =
+      Var1Set.of_list (List.filter_map (function Free x -> Some x | Bound _ -> None) vars)
+    in let build_free_vars_2 = function
+      | Free x -> Var2Set.singleton x
+      | Bound _ -> Var2Set.empty
+    in let free_vars_of_atom = function
+      | Equal (x, y) -> (build_free_vars_1 [x; y], Var2Set.empty)
+      | Member (x, y) -> (build_free_vars_1 [x; y], Var2Set.empty)
+      | Apply (pred, args) -> (build_free_vars_1 args, build_free_vars_2 pred)
+    in let var_sets_union (f11, f21) (f12, f22) = (Var1Set.union f11 f12, Var2Set.union f21 f22)
+    in let rec go = function
+      | Atom atom -> free_vars_of_atom atom
+      | Op expr -> LogicOp.(collapse var_sets_union (map go expr))
+      | Forall inner -> go inner
+      | Exists inner -> go inner
+      | Forall2 (_, inner) -> go inner
+    in go
 
   let is_closed formula =
     let free_vars_1, free_vars_2 = free_vars formula in
@@ -168,25 +153,23 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
     in transform_atoms (fun depth atom -> Atom (transform_atom depth atom))
 
   let bind_1 var =
-    transform_vars_1
-      (fun depth v -> match v with Free x when x = var -> Bound depth | _ -> v)
+    let transform_var depth = function
+      | Free x when x = var -> Bound depth
+      | _ as v -> v
+    in transform_vars_1 transform_var
 
   let bind_2 var =
-      transform_atoms
-        (fun depth atom -> match atom with
-          | Apply (Free x, args) when x = var -> Atom (Apply (Bound depth, args))
-          | _ -> Atom atom)
+    transform_atoms
+      (fun depth atom -> match atom with
+        | Apply (Free x, args) when x = var -> Atom (Apply (Bound depth, args))
+        | _ -> Atom atom)
 
-  let substitute_1 var = function
-    | Forall inner ->
-        let var = Free var in
-        let transform_var depth v =
-          match v with Bound index when index = depth -> var | _ -> v in
-        transform_vars_1 transform_var inner
-    | _ -> failwith "not a forall"
+  let substitute_1 var =
+    transform_vars_1 (fun depth -> function
+      | Bound index when index = depth -> Free var
+      | _ as v -> v)
 
-  let apply_parametrized_formula {arguments; template} vars =
-    if List.length arguments != List.length vars then failwith "wrong number of arguments";
+  let make_template formula arguments vars =
     let subst = Var1Map.of_list (List.combine arguments vars) in
     transform_vars_1 (fun depth v -> match v with
       | Free var ->
@@ -194,16 +177,12 @@ module Formula(Var1 : ORDER_STRING)(Var2 : ORDER_STRING_ARITY) = struct
           | Free _ as x -> x
           | Bound index -> Bound (depth + index))
       | _ -> v
-    ) template
+    ) formula
 
-  let substitute_2 f = function
-    | Forall2 (arity, inner) ->
-        if List.length f.arguments != arity then failwith "wrong number of arguments";
-        let transform_atom depth = function
-          | Apply (Bound index, args) when index = depth -> apply_parametrized_formula f args
-          | _ as atom -> Atom atom
-        in transform_atoms transform_atom inner
-    | _ -> failwith "not a forall"
+  let substitute_2 template =
+    transform_atoms (fun depth -> function
+      | Apply (Bound index, vars) when index = depth -> template vars
+      | _ as atom -> Atom atom)
 
   let equal x y = Atom(Equal(Free x, Free y))
   let member x y = Atom(Member(Free x, Free y))
@@ -299,8 +278,9 @@ and type formula = Formula(Var1)(Var2).t
     if Context.has_free_var_1 var context then failwith "free variable in context";
     { context; conclusion = Formula.forall var conclusion }
 
-  let elim_forall var { context; conclusion } =
-    { context ; conclusion = Formula.substitute_1 var conclusion }
+  let elim_forall var { context; conclusion } = match conclusion with
+    | Forall inner -> { context ; conclusion = Formula.substitute_1 var inner }
+    | _ -> failwith "not a forall"
 
   let intro_exists witness { context; conclusion } =
     { context; conclusion = Formula.exists witness conclusion }
@@ -318,9 +298,12 @@ and type formula = Formula(Var1)(Var2).t
     if Context.has_free_var_2 var context then failwith "free variable in context";
     { context; conclusion = Formula.forall2 var conclusion }
 
-  let elim_forall2 formula arguments { context; conclusion } =
-    let f = Formula.parametrized formula arguments in
-    { context ; conclusion = Formula.substitute_2 f conclusion }
+  let elim_forall2 formula arguments { context; conclusion } = match conclusion with
+    | Forall2 (arity, inner) ->
+        if List.length arguments != arity then failwith "wrong number of arguments";
+        let template = Formula.make_template formula arguments in
+        { context ; conclusion = Formula.substitute_2 template inner }
+    | _ -> failwith "not a forall"
 
   module PatternRules = struct
     type t = Pattern.t list * Pattern.t

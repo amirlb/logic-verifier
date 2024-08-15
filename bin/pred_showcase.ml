@@ -57,7 +57,7 @@ let example_3 =
 let example_4 =
   let phi = ("P", 1) in
   let axiom = F.(forall2 phi (forall "x" (forall "y" (
-    implies (equal "x"  "y") (iff (apply phi ["x"]) (apply phi ["y"])))))) in
+    implies (equal "x" "y") (iff (apply phi ["x"]) (apply phi ["y"])))))) in
   let not_empty a = F.(exists "x" (member "x" a)) in
   let claim = F.(implies axiom (forall "a" (forall "b" (
     implies (and_ (not_empty "a") (equal "a" "b")) (not_empty "b"))))) in
