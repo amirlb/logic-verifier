@@ -1,62 +1,50 @@
-module type OrderedPrintable = sig
-  type t
-  val compare : t -> t -> int
-  val to_string : t -> string
-end
+(* Propositional Calculus *)
 
-module Pattern : sig
-  include OrderedPrintable
-  val metavar : int -> t
-  val and_ : t -> t -> t
-  val or_ : t -> t -> t
-  val implies : t -> t -> t
-  val iff : t -> t -> t
-  val not_ : t -> t
+type pattern    (* Pattern for propositions joined with logical connectives *)
+type inference  (* A valid logical inference  P1, ..., Pn |- Q *)
 
-  type inference
-  val consequence : t list -> t -> inference
-end
+val metavar : int -> pattern
+val pattern_and : pattern -> pattern -> pattern
+val pattern_or : pattern -> pattern -> pattern
+val pattern_implies : pattern -> pattern -> pattern
+val pattern_iff : pattern -> pattern -> pattern
+val pattern_not : pattern -> pattern
+val consequence : pattern list -> pattern -> inference
+val string_of_pattern : pattern -> string
 
-module Var1 : OrderedPrintable
+(* Predicate Calculus *)
 
-module Var2 : OrderedPrintable
-type arity = int
+type variable   (* First-order variable *)
+type predicate  (* Second-order variable, open formula, built-in or definition *)
+type formula    (* Predicate-calculus formula, either open or closed *)
+type judgement  (* an assertion of the form  A1, ... An |- B *)
 
-val make_builtin : arity -> string -> Var2.t
+val make_builtin : arity:int -> name:string -> predicate
+val make_definition : predicate -> name:string -> predicate
+val predicate_of_formula : arity:int -> (variable list -> formula) -> predicate
+val string_of_predicate : predicate -> string
 
-module Formula : sig
-  include OrderedPrintable
+val apply : predicate -> variable list -> formula
+val and_ : formula -> formula -> formula
+val or_ : formula -> formula -> formula
+val implies : formula -> formula -> formula
+val iff : formula -> formula -> formula
+val not_ : formula -> formula
+val forall : name:string -> (variable -> formula) -> formula
+val exists : name:string -> (variable -> formula) -> formula
+val forall2 : arity:int -> name:string -> (predicate -> formula) -> formula
+val equal_formula : formula -> formula -> bool
+val string_of_formula : formula -> string
 
-  val apply : Var2.t -> Var1.t list -> t
-  val and_ : t -> t -> t
-  val or_ : t -> t -> t
-  val implies : t -> t -> t
-  val iff : t -> t -> t
-  val not_ : t -> t
-  val forall : (Var1.t -> t) -> t
-  val exists : (Var1.t -> t) -> t
-  val forall2 : arity -> (Var2.t -> t) -> t
-end
+val judgement_premises : judgement -> formula Seq.t
+val judgement_conclusion : judgement -> formula
+val string_of_judgement : judgement -> string
 
-module Predicate : sig
-  include OrderedPrintable
-  val from_var : Var2.t -> t
-  val from_formula : arity -> (Var1.t list -> Formula.t) -> t
-end
-
-module Verifier : sig
-  type t  (* an assertion of the form  A1, ... An |- B *)
-
-  val premises : t -> Formula.t Seq.t
-  val conclusion : t -> Formula.t
-  val to_string : t -> string
-
-  val assuming : Formula.t -> (t -> t) -> t                   (* |- A => f (... |- A) *)
-  val infer : Pattern.inference -> t list -> Formula.t -> t   (* apply this inference *)
-  val intro_forall : (Var1.t -> t) -> t                       (* from |- A derive |- forall x. A *)
-  val elim_forall : Var1.t -> t -> t                          (* from |- forall x. A derive |- A(y) *)
-  val intro_exists : Var1.t -> t -> t                         (* from |- A(y) derive |- exists x. A *)
-  val elim_exists : Var1.t -> Formula.t -> t -> t             (* from A |- B derive exists x. A |- B *)
-  val intro_forall2 : arity -> (Var2.t -> t) -> t
-  val elim_forall2 : Predicate.t -> t -> t
-end
+val assuming : formula -> (judgement -> judgement) -> judgement         (* apply f to A |- A *)
+val infer : inference -> judgement list -> formula -> judgement         (* apply this inference *)
+val intro_forall : name:string -> (variable -> judgement) -> judgement  (* from |- A derive |- forall x. A *)
+val elim_forall : variable -> judgement -> judgement                    (* from |- forall x. A derive |- A(y) *)
+val intro_exists : variable -> judgement -> judgement                   (* from |- A(y) derive |- exists x. A *)
+val elim_exists : variable -> formula -> judgement -> judgement         (* from A |- B derive exists x. A |- B *)
+val intro_forall2 : arity:int -> name:string -> (predicate -> judgement) -> judgement
+val elim_forall2 : predicate -> judgement -> judgement
