@@ -43,7 +43,7 @@ val assuming : formula -> (judgement -> judgement) -> judgement         (* apply
 val infer : inference -> judgement list -> formula -> judgement         (* apply this inference *)
 val intro_forall : name:string -> (variable -> judgement) -> judgement  (* from |- A derive |- forall x. A *)
 val elim_forall : variable -> judgement -> judgement                    (* from |- forall x. A derive |- A(y) *)
-val intro_exists : variable -> judgement -> judgement                   (* from |- A(y) derive |- exists x. A *)
+val intro_exists : name:string -> judgement -> judgement                (* from |- A(y) derive |- exists x. A *)
 val elim_exists : variable -> formula -> judgement -> judgement         (* from A |- B derive exists x. A |- B *)
 val intro_forall2 : arity:int -> name:string -> (predicate -> judgement) -> judgement
 val elim_forall2 : predicate -> judgement -> judgement

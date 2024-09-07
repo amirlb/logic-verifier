@@ -466,8 +466,8 @@ let intro_forall ~name f =
 let elim_forall var (context, conclusion) =
   (context, Quantification.elim_forall var conclusion)
 
-let intro_exists var (context, conclusion) =
-  (context, Quantification.intro_exists var conclusion)
+let intro_exists ~name (context, conclusion) =
+  (context, Quantification.intro_exists (Var1.gen name) conclusion)
 
 let elim_exists var formula (context, conclusion) =
   if VarSets.mem_var1 var (Formula.free_vars conclusion) then failwith "free variable in conclusion";
