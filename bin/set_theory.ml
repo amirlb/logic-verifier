@@ -18,7 +18,7 @@ module Axioms = struct
     forall ~name:"a" (fun a -> forall2 ~arity:2 ~name:"P" (fun p -> implies (forall ~name:"x" (fun x -> forall ~name:"y" (fun y -> forall ~name:"z" (fun z -> implies (and_ (apply p [x; y]) (apply p [x; z])) (equal y z)))))
       (exists ~name:"b" (fun b -> forall ~name:"x" (fun x -> iff (member x b) (exists ~name:"y" (fun y -> and_ (member y a) (apply p [x; y]))))))))
 
-  let subset = make_definition ~name:"subset" (predicate_of_formula ~arity:2 (function [x; y] -> forall ~name:"x" (fun a -> (implies (member a x) (member a y))) | _ -> failwith ""))
+  let subset = predicate_of_formula ~arity:2 ~name:"subset" (function [x; y] -> forall ~name:"x" (fun a -> (implies (member a x) (member a y))) | _ -> failwith "")
 
   let tarski =
     forall ~name:"n" (fun n -> exists ~name:"m" (fun m ->

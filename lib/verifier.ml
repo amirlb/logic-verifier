@@ -127,55 +127,64 @@ module VarSets = struct
   let mem_var2 var free_vars = Var2Set.mem var free_vars.vars2
 end
 
-module BaseFormula = struct
-  type 'a t =
-    | Atom of 'a
-    | Op of 'a t LogicOp.t
-    | Forall of string * 'a t
-    | Exists of string * 'a t
-    | Forall2 of int * string * 'a t
-
-  let rec map_aux f depth = function
-    | Atom atom -> f depth atom
-    | Op expr -> Op (LogicOp.map (map_aux f depth) expr)
-    | Forall (name, inner) -> Forall (name, map_aux f (depth + 1) inner)
-    | Exists (name, inner) -> Exists (name, map_aux f (depth + 1) inner)
-    | Forall2 (arity, name, inner) -> Forall2 (arity, name, map_aux f (depth + 1) inner)
-
-  let map f = map_aux f 0
-end
-
-type 'a debruijn = Bound of int | Free of 'a
-
-let equal_debruijn equal x y =
-  match x, y with
-    | Bound i, Bound j -> i = j
-    | Free x, Free y -> equal x y
-    | _, _ -> false
-
 module Formula = struct
-  type t = atom BaseFormula.t
+  type 'a debruijn = Bound of int | Free of 'a
+
+  type t =
+    | Atom of atom
+    | Op of t LogicOp.t
+    | Forall of string * t
+    | Exists of string * t
+    | Forall2 of int * string * t
 
   and atom =
     | Apply of Var2.t debruijn * Var1.t debruijn list
-    | Shorthand of definition * Var1.t debruijn list * t Lazy.t
+    | ApplyDefinition of definition * Var1.t debruijn list * t Lazy.t
 
   and definition = {
     symbol : Var2.t;
     func : Var1.t debruijn list -> t;
   }
 
-  let apply_shorthand defn args =
-    BaseFormula.Atom (Shorthand (defn, args, lazy (defn.func args)))
+  let apply_definition defn args =
+    assert (List.length args = defn.symbol.arity);
+    ApplyDefinition (defn, args, lazy (defn.func args))
 
-  let rec equal (formula1 : t) (formula2 : t) =
+  let rec map_aux f depth = function
+    | Atom atom -> Atom (f depth atom)
+    | Op expr -> Op (LogicOp.map (map_aux f depth) expr)
+    | Forall (name, inner) -> Forall (name, map_aux f (depth + 1) inner)
+    | Exists (name, inner) -> Exists (name, map_aux f (depth + 1) inner)
+    | Forall2 (arity, name, inner) -> Forall2 (arity, name, map_aux f (depth + 1) inner)
+
+  let map f = map_aux f 0
+
+  let on_var1 f depth = function
+    | Apply (pred, args) -> Apply (pred, List.map (f depth) args)
+    (* TODO: don't re-create the thunk if we get the exact same list of vars *)
+    | ApplyDefinition (defn, args, _) -> apply_definition defn (List.map (f depth) args)
+
+  let on_var2 f depth = function
+    | Apply (pred, args) as application ->
+        (match f depth pred with
+          | None -> application
+          | Some(func) -> func args)
+    | ApplyDefinition (_, _, _) as application -> application
+
+  let equal_debruijn equal x y =
+    match x, y with
+      | Bound i, Bound j -> i = j
+      | Free x, Free y -> equal x y
+      | _, _ -> false
+
+  let rec equal formula1 formula2 =
     match (formula1, formula2) with
-      | Atom (Shorthand (defn1, args1, thunk1)), Atom (Shorthand (defn2, args2, thunk2)) ->
+      | Atom (ApplyDefinition (defn1, args1, thunk1)), Atom (ApplyDefinition (defn2, args2, thunk2)) ->
           if defn1.symbol.ind = defn2.symbol.ind && List.for_all2 (equal_debruijn Var1.equal) args1 args2
             then true
             else equal (Lazy.force thunk1) (Lazy.force thunk2)
-      | Atom (Shorthand (_, _, thunk)), _ -> equal (Lazy.force thunk) formula2
-      | _, Atom (Shorthand (_, _, thunk)) -> equal formula1 (Lazy.force thunk)
+      | Atom (ApplyDefinition (_, _, thunk)), _ -> equal (Lazy.force thunk) formula2
+      | _, Atom (ApplyDefinition (_, _, thunk)) -> equal formula1 (Lazy.force thunk)
       | Atom (Apply (pred1, args1)), Atom (Apply (pred2, args2)) ->
           (equal_debruijn Var2.equal) pred1 pred2 && List.for_all2 (equal_debruijn Var1.equal) args1 args2
       | Op expr, Op expr2 -> (
@@ -196,14 +205,14 @@ module Formula = struct
           (match IntMap.find_opt i assignment with
             | Some formula' -> if equal formula formula' then Some assignment else None
             | None -> Some (IntMap.add i formula assignment))
-      | Op(pexpr), BaseFormula.Op(fexpr) ->
+      | Op pexpr, Op fexpr ->
           Option.bind
             (LogicOp.map2_unify unify pexpr fexpr)
             (fun expr -> LogicOp.collapse kleisli expr assignment)
-      | _, BaseFormula.Atom (Shorthand (_, _, thunk)) ->
+      | _, Atom (ApplyDefinition (_, _, thunk)) ->
           unify pattern (Lazy.force thunk) assignment
       | _, _ -> None
-  
+
   let matches (inference_premises, inference_conclusion) premises conclusion =
     Option.is_some (
       List.fold_left2
@@ -217,28 +226,39 @@ module Formula = struct
 
   let free_vars_of_atom = function
     | Apply (pred, args) -> {
-          VarSets.vars1 = free_vars_of_args args;
-          VarSets.vars2 = match pred with Free var -> Var2Set.singleton var | Bound _ -> Var2Set.empty;
-        }
-    | Shorthand (_, args, _) -> {
-          VarSets.vars1 = free_vars_of_args args;
-          VarSets.vars2 = Var2Set.empty;
-        }
+        VarSets.vars1 = free_vars_of_args args;
+        VarSets.vars2 = match pred with Free var -> Var2Set.singleton var | Bound _ -> Var2Set.empty;
+      }
+    | ApplyDefinition (_, args, _) -> {
+        VarSets.vars1 = free_vars_of_args args;
+        VarSets.vars2 = Var2Set.empty;
+      }
 
   let rec free_vars = function
-    | BaseFormula.Atom atom -> free_vars_of_atom atom
-    | BaseFormula.Op expr -> LogicOp.(collapse VarSets.union (map free_vars expr))
-    | BaseFormula.Forall (_, inner) -> free_vars inner
-    | BaseFormula.Exists (_, inner) -> free_vars inner
-    | BaseFormula.Forall2 (_, _, inner) -> free_vars inner
+    | Atom atom -> free_vars_of_atom atom
+    | Op expr -> LogicOp.(collapse VarSets.union (map free_vars expr))
+    | Forall (_, inner) -> free_vars inner
+    | Exists (_, inner) -> free_vars inner
+    | Forall2 (_, _, inner) -> free_vars inner
 
   (* TODO: handle name collisions *)
-  let rec to_string_aux names = function
-    | BaseFormula.Atom (Apply (pred, args)) ->
+  let lookup_var_name names = function
+    | Free var -> var.Var1.name
+    | Bound index -> List.nth names index
+
+  let atom_to_string names = function
+    | Apply (pred, args) ->
         Printf.sprintf "%s(%s)"
           (match pred with Free var -> var.name | Bound index -> List.nth names index)
-          (String.concat ", " (List.map (function Free var -> var.Var1.name | Bound index -> List.nth names index) args))
-    | Atom (Shorthand (_, _, _)) -> "TODO"
+          (String.concat ", " (List.map (lookup_var_name names) args))
+    (* | ApplyDefinition (_, _, thunk) -> to_string_aux names (Lazy.force thunk) *)
+    | ApplyDefinition (defn, args, _) ->
+        Printf.sprintf "%s(%s)"
+          defn.symbol.name
+          (String.concat ", " (List.map (lookup_var_name names) args))
+
+  let rec to_string_aux names = function
+    | Atom atom -> atom_to_string names atom
     | Op expr -> LogicOp.to_string (LogicOp.map (to_string_aux names) expr)
     | Forall (name, inner) -> Printf.sprintf "∀%s %s" name (to_string_aux (name :: names) inner)
     | Exists (name, inner) -> Printf.sprintf "∃%s %s" name (to_string_aux (name :: names) inner)
@@ -247,131 +267,89 @@ module Formula = struct
   let to_string = to_string_aux []
 end
 
-module Template = struct
-  type 'a or_parameter = Param of int | Var of 'a
-
-  type atom =
-    | Apply of Var2.t debruijn * Var1.t or_parameter debruijn list
-    | Shorthand of Formula.definition * Var1.t or_parameter debruijn list
-
-  type t = {
-    arity: int;
-    body: atom BaseFormula.t;
-  }
-
-  let substitute_template_var params depth = function
-    | Bound index -> assert (index <= depth); Bound index
-    | Free (Var var) -> Free var
-    | Free (Param i) -> match List.nth params i with
-        | Bound index -> Bound (depth + index)
-        | var -> var
-
-  let transform_template_atom params depth = function
-    | Apply (pred, args) ->
-        let args = List.map (substitute_template_var params depth) args in
-        BaseFormula.Atom (Formula.Apply (pred, args))
-    | Shorthand (defn, args) ->
-        assert (defn.symbol.arity = List.length args);
-        let args = List.map (substitute_template_var params depth) args in
-        Formula.apply_shorthand defn args
-
-  let apply template params =
-    assert (List.length params = template.arity);
-    BaseFormula.map (transform_template_atom params) template.body
-
-  let abstract_template_var param_inds depth = function
-    | Bound index -> assert (index <= depth); Bound index
-    | Free var -> match Var1Map.find_opt var param_inds with
-        | None -> Free (Var var)
-        | Some param_ind -> Free (Param param_ind)
-
-  let build_template_atom param_inds depth = function
-    | Formula.Apply (Bound index, _) when index > depth -> failwith "cannot refer to bound variable"
-    | Formula.Apply (pred, args) ->
-        let args = List.map (abstract_template_var param_inds depth) args in
-        BaseFormula.Atom (Apply (pred, args))
-    | Formula.Shorthand (defn, args, _) ->
-        let args = List.map (abstract_template_var param_inds depth) args in
-        BaseFormula.Atom (Shorthand (defn, args))
-
-  let build_template_body param_inds =
-    BaseFormula.map (build_template_atom param_inds)
-
-  let of_formula arity f =
-    let args = List.init arity (fun i -> Var1.gen (Printf.sprintf "x%d" i)) in
-    let param_inds = Var1Map.of_list (List.mapi (fun i arg -> (arg, i)) args) in
-    {
-      arity;
-      body = build_template_body param_inds (f args)
-    }
-end
-
 module Predicate = struct
   type t =
-    | Auto of Var2.t
-    | Builtin of Var2.t
-    | Template of Template.t
+    | Var of Var2.t
     | Definition of Formula.definition
 
-  let arity = function
-    | Auto var -> var.arity
-    | Builtin var -> var.arity
-    | Template template -> template.arity
-    | Definition defn -> defn.symbol.arity
+  let replace_template_var param_inds depth = Formula.(function
+    | Free var ->
+        (match Var1Map.find_opt var param_inds with
+          | Some (Free var) -> Free var
+          | Some (Bound index) -> Bound (depth + index)
+          | None -> Free var)
+    | Bound index -> Bound index)
 
-  let apply pred args =
-    assert (arity pred = List.length args);
-    match pred with
-      | Auto var -> BaseFormula.Atom (Formula.Apply (Free var, args))
-      | Builtin var -> BaseFormula.Atom (Formula.Apply (Free var, args))
-      | Template template -> Template.apply template args
-      | Definition defn -> Formula.apply_shorthand defn args
+  let apply_template params template args =
+    let param_inds = Var1Map.of_list (List.combine params args) in
+    Formula.(map (on_var1 (replace_template_var param_inds)) template)
+
+  let base_on_template arity f =
+    let params = List.init arity (fun i -> Var1.gen (Printf.sprintf "x%d" i)) in
+    apply_template params (f params)
+
+  let make_definition ~arity ~name f =
+    Definition {
+      symbol = Var2.gen arity name;
+      func = base_on_template arity f;
+    }
+
+  let apply_var var args =
+    assert (List.length args = var.Var2.arity);
+    Formula.(Apply (Free var, args))
+
+  let apply = function
+    | Var var -> apply_var var
+    | Definition defn -> Formula.apply_definition defn
+
+  let arity = function
+    | Var var -> var.arity
+    | Definition defn -> defn.symbol.arity
 
   let to_string _ = "TODO"
 end
 
 module Quantification = struct
-  let map_var1 f =
-    let aux depth = function
-      | Formula.Apply (pred, args) -> BaseFormula.Atom (Formula.Apply (pred, List.map (f depth) args))
-      (* TODO: don't re-create the thunk if we get the exact same list of vars *)
-      | Formula.Shorthand (defn, args, _) -> Formula.apply_shorthand defn (List.map (f depth) args)
-    in BaseFormula.map aux
-
   let bind_var1 var =
     let transform_var depth = function
-      | Free x when Var1.equal x var -> Bound depth
+      | Formula.Free x when Var1.equal x var -> Formula.Bound depth
       | v -> v
-    in map_var1 transform_var
+    in Formula.(map (on_var1 transform_var))
 
   let substitute_var1 var =
     let transform_var depth = function
-      | Bound index when index = depth -> Free var
+      | Formula.Bound index when index = depth -> Formula.Free var
       | v -> v
-    in map_var1 transform_var
-  
+    in Formula.(map (on_var1 transform_var))
+
+  let apply var arity args =
+    assert (List.length args = arity);
+    Formula.(Apply (var, args))
+
   let bind_pred var =
-    let aux depth = function
-      | Formula.Apply (Free pred, args) when Var2.equal pred var -> BaseFormula.Atom (Formula.Apply (Bound depth, args))
-      | atom -> BaseFormula.Atom atom
-    in BaseFormula.map aux
+    let transform_pred depth = function
+      | Formula.Free pred when Var2.equal pred var -> Some (apply (Formula.Bound depth) var.arity)
+      | _ -> None
+    in Formula.(map (on_var2 transform_pred))
 
-  let substitute_pred pred depth = function
-    | Formula.Apply (Bound index, args) when index = depth -> Predicate.apply pred args
-    | atom -> Atom atom
+  let substitute_pred pred =
+    let transform_pred depth = function
+      | Formula.Bound index when index = depth -> Some (Predicate.apply pred)
+      | _ -> None
+    in Formula.(map (on_var2 transform_pred))
 
-  let intro_forall var inner = BaseFormula.Forall (var.Var1.name, bind_var1 var inner)
-  let intro_exists var inner = BaseFormula.Exists (var.Var1.name, bind_var1 var inner)
-  let intro_forall2 var inner = BaseFormula.Forall2 (var.Var2.arity, var.Var2.name, bind_pred var inner)
+  let intro_forall var inner = Formula.Forall (var.Var1.name, bind_var1 var inner)
+  let intro_exists var inner = Formula.Exists (var.Var1.name, bind_var1 var inner)
+  let intro_forall2 var inner = Formula.Forall2 (var.Var2.arity, var.Var2.name, bind_pred var inner)
 
   let elim_forall var = function
-    | BaseFormula.Forall (_, inner) -> substitute_var1 var inner
+    | Formula.Forall (_, inner) -> substitute_var1 var inner
     | _ -> failwith "not a forall"
 
   let elim_forall2 pred = function
-    | BaseFormula.Forall2 (arity, _, inner) ->
+    | Formula.Forall2 (arity, _, inner) ->
         if arity != Predicate.arity pred then failwith "wrong arity";
-        BaseFormula.map (substitute_pred pred) inner
+        substitute_pred pred inner
     | _ -> failwith "not a forall"
 end
 
@@ -423,31 +401,32 @@ type predicate = Predicate.t
 type formula = Formula.t
 type judgement = Context.t * Formula.t
 
-let make_builtin ~arity ~name = Predicate.Builtin (Var2.gen arity name)
+let make_builtin ~arity ~name = Predicate.Var (Var2.gen arity name)
 
-let make_definition pred ~name =
-  Predicate.Definition {
-    symbol = Var2.gen (Predicate.arity pred) name;
-    func = Predicate.apply pred;
-  }
-
-let predicate_of_formula ~arity f =
-  Predicate.Template (Template.of_formula arity f)
+let predicate_of_formula = Predicate.make_definition
 
 let string_of_predicate = Predicate.to_string
 
 let apply pred args =
-  Predicate.apply pred (List.map (fun var -> Free var) args)
+  Formula.Atom (Predicate.apply pred (List.map (fun var -> Formula.Free var) args))
 
-let and_ lhs rhs = BaseFormula.(Op (And (lhs, rhs)))
-let or_ lhs rhs = BaseFormula.(Op (Or (lhs, rhs)))
-let implies lhs rhs = BaseFormula.(Op (Implies (lhs, rhs)))
-let iff lhs rhs = BaseFormula.(Op (Iff (lhs, rhs)))
-let not_ inner = BaseFormula.(Op (Not inner))
+let and_ lhs rhs = Formula.(Op (And (lhs, rhs)))
+let or_ lhs rhs = Formula.(Op (Or (lhs, rhs)))
+let implies lhs rhs = Formula.(Op (Implies (lhs, rhs)))
+let iff lhs rhs = Formula.(Op (Iff (lhs, rhs)))
+let not_ inner = Formula.(Op (Not inner))
 
-let forall ~name f = let x = Var1.gen name in Quantification.intro_forall x (f x)
-let exists ~name f = let x = Var1.gen name in Quantification.intro_exists x (f x)
-let forall2 ~arity ~name f = let p = Var2.gen arity name in Quantification.intro_forall2 p (f (Predicate.Auto p))
+let forall ~name f =
+  let x = Var1.gen name in
+  Quantification.intro_forall x (f x)
+
+let exists ~name f =
+  let x = Var1.gen name in
+  Quantification.intro_exists x (f x)
+
+let forall2 ~arity ~name f =
+  let p = Var2.gen arity name in
+  Quantification.intro_forall2 p (f (Predicate.Var p))
 
 let equal_formula = Formula.equal
 let string_of_formula = Formula.to_string
@@ -499,7 +478,7 @@ let elim_exists var formula (context, conclusion) =
 
 let intro_forall2 ~arity ~name f =
   let p = Var2.gen arity name in
-  let (context, conclusion) = f (Predicate.Auto p) in
+  let (context, conclusion) = f (Predicate.Var p) in
   if Context.has_free_var2 p context then failwith "free variable in context";
   (context, Quantification.intro_forall2 p conclusion)
 

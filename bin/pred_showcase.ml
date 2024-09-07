@@ -56,7 +56,7 @@ let example_4 =
       assuming (and_ (not_empty a) (apply equal [a; b])) (fun p ->
         let a_not_empty = infer conj_1 [p] (not_empty a) in
         let a_eq_b = infer conj_2 [p] (apply equal [a; b]) in
-        let not_empty_pred = predicate_of_formula ~arity:1
+        let not_empty_pred = predicate_of_formula ~arity:1 ~name:"not_empty"
           (function [a] -> not_empty a | _ -> failwith "") in
         let not_empty_eq = elim_forall2 not_empty_pred axiom in
         let iff = infer m_p
@@ -86,7 +86,7 @@ let example_5 =
           [
             intro_forall ~name:"x" (fun x -> infer a_iff_a [] (tautology x));
             elim_forall2
-              (predicate_of_formula ~arity:1 (function [x] -> p_1 x | _ -> failwith ""))
+              (predicate_of_formula ~arity:1 ~name:"p" (function [x] -> p_1 x | _ -> failwith ""))
               not_comp
           ]
           (and_ gen_tautology (not_ gen_tautology)))

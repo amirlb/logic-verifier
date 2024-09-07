@@ -15,13 +15,12 @@ val string_of_pattern : pattern -> string
 (* Predicate Calculus *)
 
 type variable   (* First-order variable *)
-type predicate  (* Second-order variable, open formula, built-in or definition *)
+type predicate  (* Second-order variable, an open formula, or an atomic predicate *)
 type formula    (* Predicate-calculus formula, either open or closed *)
 type judgement  (* an assertion of the form  A1, ... An |- B *)
 
 val make_builtin : arity:int -> name:string -> predicate
-val make_definition : predicate -> name:string -> predicate
-val predicate_of_formula : arity:int -> (variable list -> formula) -> predicate
+val predicate_of_formula : arity:int -> name:string -> (variable list -> formula) -> predicate
 val string_of_predicate : predicate -> string
 
 val apply : predicate -> variable list -> formula
