@@ -39,11 +39,15 @@ val judgement_premises : judgement -> formula Seq.t
 val judgement_conclusion : judgement -> formula
 val string_of_judgement : judgement -> string
 
-val assuming : formula -> (judgement -> judgement) -> judgement         (* apply f to A |- A *)
+val assumption : formula -> judgement                                   (* A |- A *)
+val conditional : formula -> judgement -> judgement                     (* from A |- B derive |- A => B *)
+val assuming : formula -> (judgement -> judgement) -> judgement         (* conditional assumption *)
 val infer : inference -> judgement list -> formula -> judgement         (* apply this inference *)
 val intro_forall : name:string -> (variable -> judgement) -> judgement  (* from |- A derive |- forall x. A *)
 val elim_forall : variable -> judgement -> judgement                    (* from |- forall x. A derive |- A(y) *)
-val intro_exists : name:string -> judgement -> judgement                (* from |- A(y) derive |- exists x. A *)
+(* TODO: do we want "get fresh var" instead? what about intro_exists, does it need a generic version as well? *)
+val elim_forall_generic : name:string -> judgement -> (variable * judgement)
+val intro_exists : variable -> judgement -> judgement                   (* from |- A(y) derive |- exists x. A *)
 val elim_exists : variable -> formula -> judgement -> judgement         (* from A |- B derive exists x. A |- B *)
 val intro_forall2 : arity:int -> name:string -> (predicate -> judgement) -> judgement
 val elim_forall2 : predicate -> judgement -> judgement

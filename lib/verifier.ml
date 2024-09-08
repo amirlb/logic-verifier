@@ -146,6 +146,10 @@ module Formula = struct
     func : Var1.t debruijn list -> t;
   }
 
+  let apply_var var args =
+    assert (List.length args = var.Var2.arity);
+    Apply (Free var, args)
+
   let apply_definition defn args =
     assert (List.length args = defn.symbol.arity);
     ApplyDefinition (defn, args, lazy (defn.func args))
@@ -294,12 +298,8 @@ module Predicate = struct
       func = base_on_template arity f;
     }
 
-  let apply_var var args =
-    assert (List.length args = var.Var2.arity);
-    Formula.(Apply (Free var, args))
-
   let apply = function
-    | Var var -> apply_var var
+    | Var var -> Formula.apply_var var
     | Definition defn -> Formula.apply_definition defn
 
   let arity = function
@@ -416,7 +416,7 @@ let predicate_of_formula = Predicate.make_definition
 let string_of_predicate = Predicate.to_string
 
 let apply pred args =
-  Formula.Atom (Predicate.apply pred (List.map (fun var -> Formula.Free var) args))
+  Formula.(Atom (Predicate.apply pred (List.map (fun var -> Free var) args)))
 
 let and_ lhs rhs = Formula.(Op (And (lhs, rhs)))
 let or_ lhs rhs = Formula.(Op (Or (lhs, rhs)))
@@ -449,15 +449,17 @@ let string_of_judgement (context, conclusion) =
     (String.concat ", " (List.map (fun (premise, _) -> Formula.to_string premise) context))
     (Formula.to_string conclusion)
 
-let assume formula =
+let assumption formula =
   (Context.singleton formula, formula)
 
-let assuming assumption derivation =
-  let (context, conclusion) = derivation (assume assumption) in
+let conditional assumption (context, conclusion) =
   (
     Context.remove assumption context,
     implies assumption conclusion
   )
+
+let assuming premise derivation =
+  conditional premise (derivation (assumption premise))
 
 let infer inference premises conclusion =
   let premise_formulas = List.map (fun (_, conclusion) -> conclusion) premises in
@@ -474,8 +476,12 @@ let intro_forall ~name f =
 let elim_forall var (context, conclusion) =
   (context, Quantification.elim_forall var conclusion)
 
-let intro_exists ~name (context, conclusion) =
-  (context, Quantification.intro_exists (Var1.gen name) conclusion)
+let elim_forall_generic ~name judgement =
+  let x = Var1.gen name in
+  (x, elim_forall x judgement)
+
+let intro_exists var (context, conclusion) =
+  (context, Quantification.intro_exists var conclusion)
 
 let elim_exists var formula (context, conclusion) =
   if VarSets.mem_var1 var (Formula.free_vars conclusion) then failwith "free variable in conclusion";
