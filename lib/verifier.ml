@@ -285,7 +285,7 @@ module Predicate = struct
     Formula.(map (on_var1 (replace_template_var param_inds)) template)
 
   let base_on_template arity f =
-    let params = List.init arity (fun i -> Var1.gen (Printf.sprintf "x%d" i)) in
+    let params = List.init arity (fun i -> Var1.gen (Printf.sprintf "x%d" (i + 1))) in
     apply_template params (f params)
 
   let make_definition ~arity ~name f =
@@ -306,7 +306,15 @@ module Predicate = struct
     | Var var -> var.arity
     | Definition defn -> defn.symbol.arity
 
-  let to_string _ = "TODO"
+  let to_string = function
+    | Var var -> Printf.sprintf "%s/%d" var.name var.arity
+    | Definition defn ->
+        let param_names = List.init defn.symbol.arity (fun i -> Printf.sprintf "x%d" (i + 1)) in
+        let params = List.map (fun name -> Formula.Free (Var1.gen name))  param_names in
+        Printf.sprintf "%s(%s) = %s"
+          defn.symbol.name
+          (String.concat ", " param_names)
+          (Formula.to_string (defn.func params))
 end
 
 module Quantification = struct
