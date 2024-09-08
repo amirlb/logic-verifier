@@ -266,7 +266,7 @@ module Formula = struct
     | Op expr -> LogicOp.to_string (LogicOp.map (to_string_aux names) expr)
     | Forall (name, inner) -> Printf.sprintf "∀%s %s" name (to_string_aux (name :: names) inner)
     | Exists (name, inner) -> Printf.sprintf "∃%s %s" name (to_string_aux (name :: names) inner)
-    | Forall2 (arity, name, inner) -> Printf.sprintf "∀%s/%d %s" name arity (to_string_aux (name :: names) inner)
+    | Forall2 (arity, name, inner) -> Printf.sprintf "∀₂%s/%d %s" name arity (to_string_aux (name :: names) inner)
 
   let to_string = to_string_aux []
 end
@@ -354,6 +354,12 @@ module Quantification = struct
     | Formula.Forall (_, inner) -> substitute_var1 var inner
     | _ -> failwith "not a forall"
 
+  let inst_exists = function
+    | Formula.Exists (name, inner) ->
+        let var = Var1.gen name in
+        (var, substitute_var1 var inner)
+    | _ -> failwith "not an exists"
+
   let elim_forall2 pred = function
     | Formula.Forall2 (arity, _, inner) ->
         if arity != Predicate.arity pred then failwith "wrong arity";
@@ -366,13 +372,6 @@ module Context = struct
 
   let singleton formula = [(formula, Formula.free_vars formula)]
 
-  let rec add formula = function
-    | [] -> singleton formula
-    | (formula', _) :: context ->
-        if Formula.equal formula formula'
-          then context
-          else add formula context
-
   let remove formula =
     List.filter (fun (formula', _) -> not (Formula.equal formula formula'))
 
@@ -382,11 +381,10 @@ module Context = struct
   let has_free_var2 var =
     List.exists (fun (_, free_vars) -> VarSets.mem_var2 var free_vars)
 
-  let union =
-    List.fold_left (fun ctx (formula, _) -> add formula ctx)
-
-  let union_all =
-    List.fold_left union []
+  let contains formula = List.exists (fun (formula', _) -> Formula.equal formula formula')
+  let add_item ctx ((formula, _) as item) = if contains formula ctx then ctx else item :: ctx
+  let union = List.fold_left add_item
+  let union_all = List.fold_left union []
 end
 
 (* Public interface follows *)
@@ -449,17 +447,13 @@ let string_of_judgement (context, conclusion) =
     (String.concat ", " (List.map (fun (premise, _) -> Formula.to_string premise) context))
     (Formula.to_string conclusion)
 
-let assumption formula =
-  (Context.singleton formula, formula)
-
-let conditional assumption (context, conclusion) =
+let assuming assumption derivation =
+  let base = (Context.singleton assumption, assumption) in
+  let (context, conclusion) = derivation base in
   (
     Context.remove assumption context,
     implies assumption conclusion
   )
-
-let assuming premise derivation =
-  conditional premise (derivation (assumption premise))
 
 let infer inference premises conclusion =
   let premise_formulas = List.map (fun (_, conclusion) -> conclusion) premises in
@@ -476,19 +470,17 @@ let intro_forall ~name f =
 let elim_forall var (context, conclusion) =
   (context, Quantification.elim_forall var conclusion)
 
-let elim_forall_generic ~name judgement =
-  let x = Var1.gen name in
-  (x, elim_forall x judgement)
-
 let intro_exists var (context, conclusion) =
   (context, Quantification.intro_exists var conclusion)
 
-let elim_exists var formula (context, conclusion) =
+let inst_exists premise derivation =
+  let (var, assumption) = Quantification.inst_exists premise in
+  let base = (Context.singleton assumption, assumption) in
+  let (context, conclusion) = derivation var base in
   if VarSets.mem_var1 var (Formula.free_vars conclusion) then failwith "free variable in conclusion";
-  let context = Context.remove formula context in
+  let context = Context.remove assumption context in
   if Context.has_free_var1 var context then failwith "free variable in context";
-  let exists_premise = Quantification.intro_exists var formula in
-  (Context.add exists_premise context, conclusion)
+  (context, implies premise conclusion)
 
 let intro_forall2 ~arity ~name f =
   let p = Var2.gen arity name in

@@ -112,10 +112,9 @@ let example_6 =
   let proof = assuming (and_ (inhabited a) (pred_implies a b)) (fun assumptions ->
     let a_inhabited = infer conj_1 [assumptions] (inhabited a) in
     let a_implies_b = infer conj_2 [assumptions] (pred_implies a b) in
-    let y, a_implies_b = elim_forall_generic ~name:"y" a_implies_b in
-    let a_cons_b = infer m_p [a_implies_b; assumption (apply a [y])] (apply b [y]) in
-    let ex_a_cons_ex_b = elim_exists y (apply a [y]) (intro_exists y a_cons_b) in
-    let ex_a_implies_ex_b = conditional (inhabited a) ex_a_cons_ex_b in
+    let ex_a_implies_ex_b = inst_exists (inhabited a) (fun x a_x ->
+      let b_x = infer m_p [elim_forall x a_implies_b; a_x] (apply b [x]) in
+      intro_exists x b_x) in
     infer m_p [ex_a_implies_ex_b; a_inhabited] (inhabited b)
   ) in
 

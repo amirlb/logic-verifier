@@ -39,15 +39,19 @@ val judgement_premises : judgement -> formula Seq.t
 val judgement_conclusion : judgement -> formula
 val string_of_judgement : judgement -> string
 
-val assumption : formula -> judgement                                   (* A |- A *)
-val conditional : formula -> judgement -> judgement                     (* from A |- B derive |- A => B *)
-val assuming : formula -> (judgement -> judgement) -> judgement         (* conditional assumption *)
-val infer : inference -> judgement list -> formula -> judgement         (* apply this inference *)
-val intro_forall : name:string -> (variable -> judgement) -> judgement  (* from |- A derive |- forall x. A *)
-val elim_forall : variable -> judgement -> judgement                    (* from |- forall x. A derive |- A(y) *)
-(* TODO: do we want "get fresh var" instead? what about intro_exists, does it need a generic version as well? *)
-val elim_forall_generic : name:string -> judgement -> (variable * judgement)
-val intro_exists : variable -> judgement -> judgement                   (* from |- A(y) derive |- exists x. A *)
-val elim_exists : variable -> formula -> judgement -> judgement         (* from A |- B derive exists x. A |- B *)
+(* Apply the given function to the derivation A |- A, convert the result Γ, A |- B to Γ |- A => B *)
+val assuming : formula -> (judgement -> judgement) -> judgement
+(* Match the inference rule to inputs and outputs *)
+val infer : inference -> judgement list -> formula -> judgement
+(* From Γ |- A derive Γ |- ∀x A *)
+val intro_forall : name:string -> (variable -> judgement) -> judgement
+(* From Γ |- ∀x A derive Γ |- A(y) *)
+val elim_forall : variable -> judgement -> judgement
+(* From Γ |- A derive Γ |- ∃x A *)
+val intro_exists : variable -> judgement -> judgement
+(* Given ∃x A, apply the function to A |- A, convert the result Γ, A |- B to Γ |- A => B *)
+val inst_exists : formula -> (variable -> judgement -> judgement) -> judgement
+(* From Γ |- A derive Γ |- ∀₂p A *)
 val intro_forall2 : arity:int -> name:string -> (predicate -> judgement) -> judgement
+(* From Γ |- ∀₂p A derive Γ |- A(φ) *)
 val elim_forall2 : predicate -> judgement -> judgement
