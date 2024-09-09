@@ -350,20 +350,23 @@ module Quantification = struct
   let intro_exists var inner = Formula.Exists (var.Var1.name, bind_var1 var inner)
   let intro_forall2 var inner = Formula.Forall2 (var.Var2.arity, var.Var2.name, bind_pred var inner)
 
-  let elim_forall var = function
+  let rec elim_forall var = function
     | Formula.Forall (_, inner) -> substitute_var1 var inner
+    | Formula.(Atom (ApplyDefinition (_, _, thunk))) -> elim_forall var (Lazy.force thunk)
     | _ -> failwith "not a forall"
 
-  let inst_exists = function
+  let rec inst_exists = function
     | Formula.Exists (name, inner) ->
         let var = Var1.gen name in
         (var, substitute_var1 var inner)
+    | Formula.(Atom (ApplyDefinition (_, _, thunk))) -> inst_exists (Lazy.force thunk)
     | _ -> failwith "not an exists"
 
-  let elim_forall2 pred = function
+  let rec elim_forall2 pred = function
     | Formula.Forall2 (arity, _, inner) ->
         if arity != Predicate.arity pred then failwith "wrong arity";
         substitute_pred pred inner
+    | Formula.(Atom (ApplyDefinition (_, _, thunk))) -> elim_forall2 pred (Lazy.force thunk)
     | _ -> failwith "not a forall"
 end
 
@@ -447,9 +450,11 @@ let string_of_judgement (context, conclusion) =
     (String.concat ", " (List.map (fun (premise, _) -> Formula.to_string premise) context))
     (Formula.to_string conclusion)
 
+let assertion axiom =
+  (Context.singleton axiom, axiom)
+
 let assuming assumption derivation =
-  let base = (Context.singleton assumption, assumption) in
-  let (context, conclusion) = derivation base in
+  let (context, conclusion) = derivation (assertion assumption) in
   (
     Context.remove assumption context,
     implies assumption conclusion
@@ -475,8 +480,7 @@ let intro_exists var (context, conclusion) =
 
 let inst_exists premise derivation =
   let (var, assumption) = Quantification.inst_exists premise in
-  let base = (Context.singleton assumption, assumption) in
-  let (context, conclusion) = derivation var base in
+  let (context, conclusion) = derivation var (assertion assumption) in
   if VarSets.mem_var1 var (Formula.free_vars conclusion) then failwith "free variable in conclusion";
   let context = Context.remove assumption context in
   if Context.has_free_var1 var context then failwith "free variable in context";

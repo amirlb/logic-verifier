@@ -39,6 +39,8 @@ val judgement_premises : judgement -> formula Seq.t
 val judgement_conclusion : judgement -> formula
 val string_of_judgement : judgement -> string
 
+(* Assert a derivation A |- A *)
+val assertion : formula -> judgement
 (* Apply the given function to the derivation A |- A, convert the result Γ, A |- B to Γ |- A => B *)
 val assuming : formula -> (judgement -> judgement) -> judgement
 (* Match the inference rule to inputs and outputs *)
