@@ -120,6 +120,37 @@ let example_6 =
 
   (claim, proof)
 
+let example_7 =
+  (* Comprehension axiom for the equality relation *)
+  let comprehension p_2 =
+    not_ (forall2 ~arity:2 ~name:"φ" (fun phi -> not_ (forall ~name:"x" (fun x -> (forall ~name:"y" (fun y -> iff (apply phi [x; y]) (p_2 x y))))))) in
+
+  let prove_comprehension p_2 =
+    let a_iff_a = consequence [] (pattern_iff (metavar 1) (metavar 1)) in
+    let conj = consequence [metavar 1; metavar 2] (pattern_and (metavar 1) (metavar 2)) in
+    let by_contradiction = consequence [pattern_implies (metavar 1) (pattern_and (metavar 2) (pattern_not (metavar 2)))] (pattern_not (metavar 1)) in
+
+    let tautology x y = iff (p_2 x y) (p_2 x y) in
+    let gen_tautology = forall ~name:"x" (fun x -> forall ~name:"y" (fun y -> tautology x y)) in
+
+    let not_comp = forall2 ~arity:2 ~name:"φ" (fun phi -> not_ (forall ~name:"x" (fun x -> (forall ~name:"y" (fun y -> iff (apply phi [x; y]) (p_2 x y)))))) in
+    infer by_contradiction
+      [assuming not_comp (fun not_comp ->
+        (infer conj
+          [
+            intro_forall ~name:"x" (fun x -> intro_forall ~name:"y" (fun y -> infer a_iff_a [] (tautology x y)));
+            elim_forall2
+              (predicate_of_formula ~arity:2 ~name:"p" (function [x; y] -> p_2 x y | _ -> failwith ""))
+              not_comp
+          ]
+          (and_ gen_tautology (not_ gen_tautology)))
+      )]
+      (comprehension p_2)
+  in
+
+  let equiv x y = forall2 ~arity:1 ~name:"R" (fun r -> iff (apply r [x]) (apply r [y])) in
+  (comprehension equiv, prove_comprehension equiv)
+
 let validate (claim, proof) =
   assert (Seq.is_empty (judgement_premises proof));
   assert (equal_formula (judgement_conclusion proof) claim);
@@ -132,3 +163,4 @@ let main () =
   validate example_4;
   validate example_5;
   validate example_6;
+  validate example_7;
